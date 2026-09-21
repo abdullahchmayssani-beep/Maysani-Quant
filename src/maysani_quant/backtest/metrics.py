@@ -14,9 +14,10 @@ against - the trial count lives in the experiment registry, not in a single run.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from maysani_quant.domain.models import PortfolioSnapshot, TradeRecord
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from maysani_quant.domain.enums import Action, FillStatus, Side
+from maysani_quant.domain.enums import Action, FillStatus
 from maysani_quant.domain.models import Fill, InstrumentSpec
 from maysani_quant.execution.costs import CostConfig, CostModel
 from maysani_quant.portfolio.ledger import AccountingError, PortfolioLedger

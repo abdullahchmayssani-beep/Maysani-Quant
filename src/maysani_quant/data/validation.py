@@ -5,9 +5,9 @@ not repair data: a silently "fixed" bar is an untraceable bar.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Sequence
 
 from maysani_quant.domain.enums import QualityFlag
 from maysani_quant.domain.models import MarketBar

@@ -18,7 +18,7 @@ import argparse
 import json
 import math
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from maysani_quant import __version__
@@ -136,7 +136,7 @@ def cmd_make_synthetic(args: argparse.Namespace) -> int:
         seed = (1103515245 * seed + 12345) % (2 ** 31)
         return seed / (2 ** 31)
 
-    start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    start = datetime(2020, 1, 1, tzinfo=UTC)
     price = 1.10
     rows = ["timestamp,open,high,low,close,volume"]
     for i in range(args.bars):

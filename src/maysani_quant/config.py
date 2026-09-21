@@ -8,9 +8,10 @@ typo in a risk limit fails loudly instead of silently running the default.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import yaml
 

@@ -8,7 +8,7 @@ without touching the engine (Section 21.7).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from maysani_quant.domain.models import stable_hash, to_jsonable
@@ -53,4 +53,4 @@ def make_record_id(run_id: str, record_type: str, sequence: int, payload: Any) -
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)

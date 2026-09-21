@@ -102,7 +102,7 @@ class RiskState:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "RiskState":
+    def from_dict(cls, payload: dict) -> RiskState:
         return cls(
             session_date=payload.get("session_date"),
             session_start_equity=float(payload.get("session_start_equity", 0.0)),

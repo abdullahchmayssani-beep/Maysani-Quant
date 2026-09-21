@@ -8,7 +8,8 @@ is usable and what size it implies.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from maysani_quant.domain.enums import Action, ReasonCode
 from maysani_quant.domain.models import FeatureSnapshot, PortfolioSnapshot, Signal, stable_hash

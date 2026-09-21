@@ -15,13 +15,14 @@ The pending intent is the only state that crosses a bar boundary.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from maysani_quant.data.interfaces import PointInTimeView
 from maysani_quant.data.validation import ValidationReport
-from maysani_quant.domain.enums import Action, OrganismState, ReasonCode, Side, Verdict
+from maysani_quant.domain.enums import Action, OrganismState, ReasonCode, Side
 from maysani_quant.domain.models import (
     DecisionRecord,
     Fill,

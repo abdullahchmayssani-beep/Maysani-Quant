@@ -10,7 +10,8 @@ Rules this module obeys:
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from maysani_quant.backtest.engine import BacktestResult
 from maysani_quant.backtest.metrics import MetricsBundle
@@ -62,7 +63,7 @@ def render_run_report(
 
     lines += [
         "=" * 74,
-        f"MAYSANI QUANT V0.1 - BACKTEST REPORT",
+        "MAYSANI QUANT V0.1 - BACKTEST REPORT",
         "=" * 74,
         "",
         "PROVENANCE",

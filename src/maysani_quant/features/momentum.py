@@ -1,7 +1,7 @@
 """Momentum / trend features. Few, predeclared parameters (Section 21.6)."""
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from maysani_quant.features.returns import cumulative_log_return
 

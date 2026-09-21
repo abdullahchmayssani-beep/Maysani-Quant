@@ -6,7 +6,7 @@ computed by hand in the assertion.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -17,7 +17,7 @@ from maysani_quant.execution.costs import CostConfig, CostModel
 from maysani_quant.features.pipeline import FeatureConfig
 from maysani_quant.risk.interfaces import RiskConfig
 
-START = datetime(2024, 1, 1, tzinfo=timezone.utc)
+START = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 @pytest.fixture

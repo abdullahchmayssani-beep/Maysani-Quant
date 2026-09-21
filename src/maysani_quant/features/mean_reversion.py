@@ -6,7 +6,7 @@ EUR/USD mean reverts profitably.
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def rolling_zscore(values: Sequence[float], window: int) -> float:

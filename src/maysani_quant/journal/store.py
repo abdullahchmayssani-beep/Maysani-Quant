@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from maysani_quant.domain.models import to_jsonable
 from maysani_quant.journal.schema import JournalEnvelope, make_record_id, utc_now

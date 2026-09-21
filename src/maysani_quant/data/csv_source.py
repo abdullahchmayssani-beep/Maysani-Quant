@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import csv
 import hashlib
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterator, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterator, Sequence
 
 from maysani_quant.data.validation import ValidationReport, validate_bars
 from maysani_quant.domain.enums import QualityFlag
@@ -28,8 +28,8 @@ def _parse_timestamp(raw: str) -> datetime:
     text = raw.strip().replace("Z", "+00:00")
     dt = datetime.fromisoformat(text)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def _optional_float(row: dict[str, str], key: str) -> float | None:

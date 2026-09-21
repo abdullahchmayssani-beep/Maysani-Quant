@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from maysani_quant.backtest.engine import ENGINE_VERSION, BacktestEngine, BacktestResult
 from maysani_quant.backtest.metrics import MetricsBundle, compute_metrics

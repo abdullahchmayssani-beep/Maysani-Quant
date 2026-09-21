@@ -6,8 +6,9 @@ strategy code, and it raises rather than silently returning future rows.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime
-from typing import Iterable, Iterator, Protocol, Sequence
+from typing import Protocol
 
 from maysani_quant.domain.models import MarketBar
 

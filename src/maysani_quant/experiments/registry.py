@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from maysani_quant.domain.models import ExperimentRecord, stable_hash, to_jsonable
 
@@ -70,7 +71,7 @@ class ExperimentRegistry:
         parent_experiment_id: str | None = None,
         notes: str = "",
     ) -> ExperimentRecord:
-        created = datetime.now(timezone.utc)
+        created = datetime.now(UTC)
         experiment_id = stable_hash(
             {
                 "strategy": f"{strategy_id}@{strategy_version}",
@@ -117,7 +118,7 @@ class ExperimentRegistry:
             {
                 "event": "CLOSE",
                 "experiment_id": record.experiment_id,
-                "closed_at": datetime.now(timezone.utc).isoformat(),
+                "closed_at": datetime.now(UTC).isoformat(),
                 "status": status,
                 "metrics": to_jsonable(dict(metrics or {})),
                 "notes": notes,

@@ -6,7 +6,7 @@ computed from completed bars only.
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from collections.abc import Sequence
 
 from maysani_quant.domain.models import MarketBar
 from maysani_quant.features.returns import log_returns
