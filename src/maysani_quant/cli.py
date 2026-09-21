@@ -5,12 +5,20 @@
     maysani-quant show-experiment --id <experiment_id>
     maysani-quant make-synthetic-dataset --out data/SYNTHETIC_...csv
     maysani-quant strategies
+    maysani-quant acquire-dukascopy --instrument EURUSD --start ... --end ...
 
 `make-synthetic-dataset` exists so the pipeline is runnable before a licensed
 EUR/USD dataset is in place. Its output is named SYNTHETIC_*, flagged in every
 bar's quality flags, and banner-warned in the report. It is a test fixture for
 the plumbing - it is not market data and nothing measured on it says anything
 about EUR/USD (Section 22: never fabricate market data).
+
+`acquire-dukascopy` is the automatic acquisition path (ADR 0005): given an
+instrument and a bounded UTC window, it downloads the required `.bi5` hours
+(skipping any already cached), runs them through the existing pipeline, and
+prints a summary. This session's sandbox cannot reach Dukascopy - see
+`docs/STATUS.md` for the exact command to run this against the real endpoint
+from a runtime that has provider connectivity.
 """
 from __future__ import annotations
 
@@ -24,7 +32,7 @@ from pathlib import Path
 from maysani_quant import __version__
 from maysani_quant.backtest.report import render_comparison, render_run_report
 from maysani_quant.backtest.runner import build_source, ensure_dir, run_strategy
-from maysani_quant.config import load_config
+from maysani_quant.config import BAR_SECONDS, load_config, parse_utc
 from maysani_quant.experiments.registry import ExperimentRegistry, code_version
 from maysani_quant.strategies.base import registered_strategies
 
@@ -156,6 +164,78 @@ def cmd_make_synthetic(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_acquire_dukascopy(args: argparse.Namespace) -> int:
+    """Automatic acquisition (ADR 0005): instrument + bounded UTC window in,
+    a validated canonical dataset out. Never fabricates missing data - any
+    unavailable/failed hour is reported explicitly, not silently skipped."""
+    from maysani_quant.data.providers.dukascopy import DukascopyProvider
+    from maysani_quant.data.service import MarketDataService
+
+    start = parse_utc(args.start)
+    end = parse_utc(args.end)
+    if end <= start:
+        print("--end must be after --start", file=sys.stderr)
+        return 2
+
+    provider = DukascopyProvider(
+        price_precision=args.price_precision,
+        timeout_seconds=args.timeout_seconds,
+        max_attempts=args.max_attempts,
+        backoff_base_seconds=args.backoff_base_seconds,
+    )
+
+    print(f"instrument         : {args.instrument}")
+    print(f"requested window   : {start.isoformat()} -> {end.isoformat()}")
+
+    try:
+        service = MarketDataService(
+            provider,
+            instrument=args.instrument,
+            start=start,
+            end=end,
+            bar_seconds=BAR_SECONDS.get(args.timeframe, 3600),
+            timeframe=args.timeframe,
+            available_time_policy=args.available_time_policy,
+            available_time_lag_seconds=args.available_time_lag_seconds,
+            raw_root=args.raw_root,
+            canonical_root=args.canonical_root,
+            require_bid_ask=not args.no_require_bid_ask,
+        )
+    except Exception as exc:  # noqa: BLE001 - a hard pipeline failure (e.g. corrupt data)
+        print(f"ACQUISITION FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+
+    outcomes = provider.outcomes
+    downloaded = [o for o in outcomes if o.status == "downloaded"]
+    cache_hits = [o for o in outcomes if o.status == "cache_hit"]
+    missing = [o for o in outcomes if o.status == "missing"]
+    failed = [o for o in outcomes if o.status == "failed"]
+
+    print(f"artifacts requested: {len(outcomes)}")
+    print(f"downloaded         : {len(downloaded)}")
+    print(f"cache hits         : {len(cache_hits)}")
+    print(f"missing            : {len(missing)}")
+    print(f"failed             : {len(failed)}")
+    for outcome in missing + failed:
+        print(
+            f"  - {outcome.hour_start.isoformat()} [{outcome.status}] "
+            f"{outcome.detail} (attempts={outcome.attempts})"
+        )
+    print(f"raw artifact hashes: {list(service.manifest.raw_artifact_hashes)}")
+    print(f"canonical identity : {service.data_hash}")
+    print(f"canonical dataset  : {service.dataset_path}")
+    print(
+        f"bar coverage       : {service.manifest.actual_start} -> "
+        f"{service.manifest.actual_end} ({service.manifest.bar_count} bars)"
+    )
+    print(f"quality status     : {service.validation.summary()}")
+
+    if service.manifest.bar_count == 0:
+        print("ACQUISITION PRODUCED ZERO BARS - treat as a failed run.", file=sys.stderr)
+        return 2
+    return 0 if service.validation.ok else 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="maysani-quant", description=__doc__)
     parser.add_argument("--version", action="version", version=f"maysani-quant {__version__}")
@@ -191,6 +271,26 @@ def build_parser() -> argparse.ArgumentParser:
     ms.add_argument("--bars", type=int, default=600)
     ms.add_argument("--seed", type=int, default=20260920)
     ms.set_defaults(func=cmd_make_synthetic)
+
+    aq = sub.add_parser(
+        "acquire-dukascopy",
+        help="automatically acquire+ingest a Dukascopy .bi5 window (ADR 0005)",
+    )
+    aq.add_argument("--instrument", default="EURUSD")
+    aq.add_argument("--start", required=True, help="UTC ISO-8601, e.g. 2024-01-08T00:00:00Z")
+    aq.add_argument("--end", required=True, help="UTC ISO-8601, e.g. 2024-01-08T01:00:00Z")
+    aq.add_argument("--timeframe", default="H1", choices=sorted(BAR_SECONDS))
+    aq.add_argument("--raw-root", default="data/raw")
+    aq.add_argument("--canonical-root", default="data/cache/canonical")
+    aq.add_argument("--price-precision", type=int, default=5)
+    aq.add_argument("--available-time-policy", default="bar_close",
+                     choices=["bar_close", "bar_close_plus_lag"])
+    aq.add_argument("--available-time-lag-seconds", type=int, default=0)
+    aq.add_argument("--timeout-seconds", type=float, default=30.0)
+    aq.add_argument("--max-attempts", type=int, default=4)
+    aq.add_argument("--backoff-base-seconds", type=float, default=1.0)
+    aq.add_argument("--no-require-bid-ask", action="store_true")
+    aq.set_defaults(func=cmd_acquire_dukascopy)
 
     return parser
 

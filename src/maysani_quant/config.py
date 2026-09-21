@@ -39,13 +39,16 @@ class StrategySpec:
 
 @dataclass
 class DukascopyConfig:
-    """V0.2 (ADR 0003). Only consulted when `data.provider: dukascopy`."""
+    """V0.2 (ADR 0003/0005). Only consulted when `data.provider: dukascopy`."""
 
     start: datetime
     end: datetime
     raw_root: str = "data/raw"
     canonical_root: str = "data/cache/canonical"
     require_bid_ask: bool = True
+    timeout_seconds: float = 30.0
+    max_attempts: int = 4
+    backoff_base_seconds: float = 1.0
 
 
 @dataclass
@@ -103,7 +106,7 @@ def _require(mapping: Mapping[str, Any], key: str, where: str) -> Any:
     return mapping[key]
 
 
-def _parse_utc(text: str) -> datetime:
+def parse_utc(text: str) -> datetime:
     dt = datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
@@ -134,11 +137,14 @@ def load_config(path: str | Path) -> AppConfig:
     if data_provider == "dukascopy":
         duka_raw = _require(data, "dukascopy", "data")
         dukascopy_config = DukascopyConfig(
-            start=_parse_utc(_require(duka_raw, "start", "data.dukascopy")),
-            end=_parse_utc(_require(duka_raw, "end", "data.dukascopy")),
+            start=parse_utc(_require(duka_raw, "start", "data.dukascopy")),
+            end=parse_utc(_require(duka_raw, "end", "data.dukascopy")),
             raw_root=str(duka_raw.get("raw_root", "data/raw")),
             canonical_root=str(duka_raw.get("canonical_root", "data/cache/canonical")),
             require_bid_ask=bool(duka_raw.get("require_bid_ask", True)),
+            timeout_seconds=float(duka_raw.get("timeout_seconds", 30.0)),
+            max_attempts=int(duka_raw.get("max_attempts", 4)),
+            backoff_base_seconds=float(duka_raw.get("backoff_base_seconds", 1.0)),
         )
 
     costs_raw = raw.get("costs", {})

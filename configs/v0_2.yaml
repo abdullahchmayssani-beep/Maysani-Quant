@@ -52,6 +52,9 @@ data:
     raw_root: data/raw
     canonical_root: data/cache/canonical
     require_bid_ask: true
+    timeout_seconds: 30.0     # ADR 0005 - per-attempt HTTP timeout
+    max_attempts: 4           # bounded retries: 1 initial try + 3 retries
+    backoff_base_seconds: 1.0 # exponential: 1s, 2s, 4s, capped at 30s
 
 costs:
   scenario_name: baseline

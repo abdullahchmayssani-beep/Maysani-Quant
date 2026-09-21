@@ -66,6 +66,14 @@ class MarketDataService:
 
         self._raw_store = RawArtifactStore(raw_root)
         self._canonical_store = CanonicalStore(canonical_root)
+
+        # Cache-aware providers (ADR 0005) expose a `raw_store` attribute
+        # they consult before an expensive fetch (typically a network call).
+        # MarketDataService owns the raw cache location, so it wires itself
+        # in here rather than requiring every caller to pass a matching
+        # raw_root to both the provider and the service.
+        if hasattr(provider, "raw_store"):
+            provider.raw_store = self._raw_store
         self._policy = NormalizationPolicy(
             timeframe=timeframe,
             available_time_policy=available_time_policy,

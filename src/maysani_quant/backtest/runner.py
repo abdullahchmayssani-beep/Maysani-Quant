@@ -133,7 +133,12 @@ def build_source(
         from maysani_quant.data.providers.dukascopy import DukascopyProvider
 
         assert config.dukascopy is not None  # enforced by config.py's load_config
-        provider = DukascopyProvider(price_precision=config.instrument.price_precision)
+        provider = DukascopyProvider(
+            price_precision=config.instrument.price_precision,
+            timeout_seconds=config.dukascopy.timeout_seconds,
+            max_attempts=config.dukascopy.max_attempts,
+            backoff_base_seconds=config.dukascopy.backoff_base_seconds,
+        )
         return MarketDataService(
             provider,
             instrument=config.instrument.symbol,

@@ -4,10 +4,20 @@ Bytes are written exactly once per SHA-256 and never rewritten - a second
 store of the same content is a no-op verify, not a second write. This is the
 only stage allowed to touch the raw cache directory; PARSE reads from it, it
 never writes to it.
+
+Also maintains a small **request index** (ADR 0005) mapping
+`(provider, instrument, requested_start, requested_end) -> sha256`, so a
+provider that already has the exact artifact for a request can skip an
+expensive re-fetch (typically a network call) entirely, without needing to
+know a content hash in advance. The index is a pointer, not a source of
+truth: `find_by_request` always re-verifies the pointed-to blob's checksum
+before trusting it, so a corrupted or hand-edited cache entry is treated as
+"not cached" rather than silently served.
 """
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from maysani_quant.data.provenance import RawManifest, sha256_bytes
@@ -28,6 +38,30 @@ class RawArtifactStore:
     def _paths(self, provider: str, instrument: str, digest: str) -> tuple[Path, Path]:
         directory = self.root / provider / instrument / digest[:2]
         return directory / f"{digest}.bin", directory / f"{digest}.manifest.json"
+
+    def _request_index_path(
+        self, provider: str, instrument: str, requested_start: datetime, requested_end: datetime
+    ) -> Path:
+        key = (
+            f"{requested_start.astimezone(UTC):%Y%m%dT%H%M%SZ}_"
+            f"{requested_end.astimezone(UTC):%Y%m%dT%H%M%SZ}"
+        )
+        return self.root / provider / instrument / "_requests" / f"{key}.json"
+
+    def find_by_request(
+        self, provider: str, instrument: str, requested_start: datetime, requested_end: datetime
+    ) -> RawManifest | None:
+        """The cache-hit lookup: is there already a verified artifact on disk
+        for this exact request? Self-healing - any inconsistency (missing
+        index, missing blob, checksum mismatch, corrupt index JSON) is
+        treated as a cache miss, never as an error."""
+        index_path = self._request_index_path(provider, instrument, requested_start, requested_end)
+        try:
+            digest = json.loads(index_path.read_text(encoding="utf-8"))["sha256"]
+            self.get_bytes(provider, instrument, digest)  # re-verifies checksum
+            return self.get_manifest(provider, instrument, digest)
+        except (OSError, KeyError, ValueError):
+            return None
 
     def put(self, artifact: RawArtifact) -> RawManifest:
         digest = sha256_bytes(artifact.content)
@@ -51,10 +85,19 @@ class RawArtifactStore:
                     f"content-addressed collision at {blob_path}: on-disk bytes do not "
                     "match their own filename hash. Refusing to overwrite."
                 )
-            return manifest  # identical bytes already stored; nothing to do
-        blob_path.parent.mkdir(parents=True, exist_ok=True)
-        blob_path.write_bytes(artifact.content)
-        manifest_path.write_text(json.dumps(manifest.to_dict(), indent=2), encoding="utf-8")
+        else:
+            blob_path.parent.mkdir(parents=True, exist_ok=True)
+            blob_path.write_bytes(artifact.content)
+            manifest_path.write_text(json.dumps(manifest.to_dict(), indent=2), encoding="utf-8")
+
+        # Always (re)point this exact request at the (possibly pre-existing)
+        # blob, so a future identical request is a cache hit even if this
+        # call's bytes happened to already be stored under a prior request.
+        index_path = self._request_index_path(
+            artifact.provider, artifact.instrument, artifact.requested_start, artifact.requested_end
+        )
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        index_path.write_text(json.dumps({"sha256": digest}), encoding="utf-8")
         return manifest
 
     def get_bytes(self, provider: str, instrument: str, digest: str) -> bytes:
