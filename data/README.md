@@ -61,3 +61,31 @@ fails loudly on any bar missing a spread rather than falling back.
   what licence and redistribution terms?
 - Daily, hourly, or both? Start with the horizon that can be simulated
   honestly with the data actually available.
+
+## V0.2: provider-independent pipeline (see `docs/adr/0003`)
+
+Two new local, gitignored directories hold everything the Dukascopy provider
+(or any future provider) produces. Neither is committed to git - see
+`.gitignore`.
+
+- `data/raw/<provider>/<instrument>/<sha256[:2]>/<sha256>.bin` — the
+  provider's original artifact bytes, verbatim, plus a `.manifest.json`
+  sidecar (SHA-256, provider/version, requested window, retrieval time).
+  Content-addressed: identical bytes are never rewritten.
+- `data/cache/canonical/<provider>/<instrument>/<canonical_identity_hash>.csv`
+  — validated, normalized `MarketBar`s, plus a `.manifest.json` recording the
+  reproducible identity (raw hashes + provider + instrument + window +
+  schema/policy version - retrieval time is provenance, not part of the
+  identity).
+
+Set `data.provider: dukascopy` in a config (see `configs/v0_2.yaml`) to use
+this path instead of a CSV file; `data.provider: csv` (or omitting the key)
+is exactly V0.1's behaviour, unchanged.
+
+**As of this commit, no real Dukascopy artifact has been fetched in this
+repository.** This session's network egress policy denies
+`datafeed.dukascopy.com`; the pipeline is built and tested entirely against
+offline fixture bytes (see `tests/unit/test_dukascopy_adapter.py` and
+`tests/unit/test_market_data_service.py`). Numbers produced by
+`configs/v0_2.yaml` will not exist until that access is available and the
+pipeline has actually been run against it.

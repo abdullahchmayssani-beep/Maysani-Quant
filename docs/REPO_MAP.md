@@ -44,8 +44,25 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
     `LookAheadError`, `InsufficientHistory`.
   - `csv_source.py` — the CSV-backed `MarketDataSource`; refuses to invent an
     `available_time` and refuses to treat midpoint OHLC as executable without
-    an explicit spread policy.
-  - `validation.py` — bar-level data validation / `ValidationReport`.
+    an explicit spread policy. Unchanged since V0.1.
+  - `validation.py` — bar-level data validation / `ValidationReport`. V0.1
+    only; still governs the CSV path. Do not confuse with
+    `pipeline/canonical_validate.py` below (see `docs/adr/0003`).
+  - `provenance.py` — V0.2. Raw/canonical manifest types and the
+    reproducible `canonical_identity_hash` (excludes retrieval time).
+  - `service.py` — V0.2. `MarketDataService`: a `MarketDataSource`-compatible
+    facade that runs a `MarketDataProvider` through the full pipeline below.
+  - `providers/` — V0.2. `base.py` defines `MarketDataProvider`
+    (`fetch_artifacts` + `parse_artifact`), `RawArtifact`, `ProviderTick`.
+    `dukascopy.py` is the only module allowed to know Dukascopy's URL scheme
+    and `.bi5` byte layout (documented `[UNVERIFIED]` pending a real fetch -
+    see `docs/STATUS.md`).
+  - `pipeline/` — V0.2, provider-agnostic. `raw_store.py` (content-addressed,
+    immutable artifact cache), `raw_validate.py` (checksum/structural checks
+    only), `normalize.py` (tick -> `MarketBar` aggregation, documented
+    policy), `canonical_validate.py` (VALID/WARNING/INVALID severity,
+    FX weekend-gap-aware - a different module/report type from
+    `data/validation.py`), `canonical_store.py` (reproducible-identity cache).
 
 - `features/` — pure, point-in-time-safe feature computation
   (`returns.py`, `momentum.py`, `mean_reversion.py`, `volatility.py`,
@@ -97,21 +114,34 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
 
 ## Configuration
 
-- `configs/v0_1.yaml` is the only config file. Every number that can
-  influence a result — instrument spec, account, risk limits, cost model,
-  data source — lives here and is loaded strictly (`config.py`: unknown
-  keys raise). Changing a value changes the config hash and the experiment
-  id; see `CLAUDE.md` → Never.
+- `configs/v0_1.yaml` is the frozen V0.1 config - untouched by V0.2, byte
+  identical to the V0.1 baseline. Every number that can influence a result —
+  instrument spec, account, risk limits, cost model, data source — lives
+  here and is loaded strictly (`config.py`: unknown top-level keys raise).
+  Changing a value changes the config hash and the experiment id; see
+  `CLAUDE.md` → Never.
+- `configs/v0_2.yaml` is new (V0.2). Identical strategies/risk/cost
+  parameters to V0.1; the only substantive difference is `data.provider:
+  dukascopy` and its `data.dukascopy` sub-block (start/end window,
+  raw/canonical cache roots). `data.provider` defaults to `csv` when absent,
+  which is exactly V0.1's behaviour - see `docs/adr/0003`.
 
 ## Tests
 
 - `tests/unit/` — `test_point_in_time.py`, `test_accounting.py`,
   `test_execution.py`, `test_risk_engine.py` — the invariant tests live here
   (see the table in `CLAUDE.md`), tagged `@pytest.mark.invariant`.
+  V0.2 adds `test_dukascopy_adapter.py`, `test_raw_store.py`,
+  `test_canonical_validate.py`, `test_market_data_service.py` (the last
+  includes the adversarial PIT test and the cross-provider invariant test,
+  both `@pytest.mark.invariant`). All run offline against hand-built fixture
+  bytes; none make a network call.
 - `tests/integration/test_engine.py` — full-engine determinism, restart/replay,
   one-decision-per-bar.
 - `tests/regression/test_regression.py` — repo-wide regressions, including
-  the "no LLM dependency" build check.
+  `test_no_llm_dependency_anywhere` and (V0.2)
+  `test_no_network_dependency_outside_the_provider_boundary` (network imports
+  forbidden everywhere except `data/providers/` - see `docs/adr/0003`).
 - `tests/conftest.py` — shared fixtures.
 - Run: `pytest` (full suite) or `pytest -m invariant` (invariant subset only).
 
@@ -124,6 +154,10 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
   record chain is fixed.
 - `docs/adr/0002-persistence-and-reproducibility.md` — why the journal and
   experiment registry are append-only.
+- `docs/adr/0003-provider-independent-market-data.md` — the V0.2 pipeline
+  boundary (FETCH -> RAW STORE -> PARSE -> NORMALIZE -> CANONICAL VALIDATE ->
+  CANONICAL STORE), why Dukascopy stays adapter-only, and the reproducible
+  canonical-identity design.
 - Any change to authority boundaries, persistence semantics or risk
   invariants requires a new ADR first.
 
