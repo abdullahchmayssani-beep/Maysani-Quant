@@ -25,7 +25,7 @@ from maysani_quant.data.provenance import (
     NormalizationPolicy,
     canonical_identity_hash,
 )
-from maysani_quant.data.providers.base import MarketDataProvider
+from maysani_quant.data.providers.base import MarketDataProvider, RawArtifact
 from maysani_quant.domain.models import MarketBar
 
 PIPELINE_VERSION = "pipeline-v1"
@@ -82,7 +82,8 @@ class MarketDataService:
         self, require_bid_ask: bool
     ) -> tuple[tuple[MarketBar, ...], CanonicalManifest]:
         raw_hashes: list[str] = []
-        all_ticks = []
+        groups: dict[tuple[datetime, datetime], list[RawArtifact]] = {}
+        group_order: list[tuple[datetime, datetime]] = []
         for artifact in self.provider.fetch_artifacts(self.instrument, self.start, self.end):
             # RAW STORE happens before PARSE ever sees the bytes.
             raw_manifest = self._raw_store.put(artifact)
@@ -92,8 +93,21 @@ class MarketDataService:
             validate_raw_artifact(stored, raw_manifest)
             raw_hashes.append(raw_manifest.sha256)
 
+            # PARSE operates on a group of artifacts sharing one requested
+            # window (ADR 0004) - a `.bi5` hour is a group of one; a website
+            # CSV export's separate BID/ASK files land in the same group.
+            key = (artifact.requested_start, artifact.requested_end)
+            if key not in groups:
+                groups[key] = []
+                group_order.append(key)
+            groups[key].append(artifact)
+
+        all_ticks = []
+        for key in group_order:
+            group = groups[key]
             ticks = require_parseable(
-                self.provider.parse_artifact(artifact), artifact.source_uri
+                self.provider.parse_artifacts(group),
+                ",".join(a.source_uri for a in group),
             )
             all_ticks.extend(ticks)
 

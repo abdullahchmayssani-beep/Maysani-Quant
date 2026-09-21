@@ -37,7 +37,7 @@ from __future__ import annotations
 import lzma
 import struct
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 
 from maysani_quant.data.providers.base import (
@@ -110,28 +110,34 @@ class DukascopyProvider:
                 content=content,
             )
 
-    def parse_artifact(self, artifact: RawArtifact) -> Iterator[ProviderTick]:
-        if not artifact.content:
-            return  # a genuinely empty hour (e.g. weekend close) has no ticks
-        try:
-            raw = lzma.decompress(artifact.content)
-        except lzma.LZMAError as exc:
-            raise ArtifactParseError(
-                f"artifact {artifact.source_uri} is not a valid LZMA stream: {exc}"
-            ) from exc
-        if len(raw) % _RECORD_SIZE != 0:
-            raise ArtifactParseError(
-                f"artifact {artifact.source_uri} decompressed to {len(raw)} bytes, "
-                f"not a multiple of the {_RECORD_SIZE}-byte record size"
-            )
-        hour_start = artifact.requested_start
-        for offset in range(0, len(raw), _RECORD_SIZE):
-            ms, ask_raw, bid_raw, ask_volume, bid_volume = _RECORD_STRUCT.unpack_from(raw, offset)
-            yield ProviderTick(
-                instrument=artifact.instrument,
-                timestamp=hour_start + timedelta(milliseconds=ms),
-                bid=bid_raw / self.point_value,
-                ask=ask_raw / self.point_value,
-                bid_volume=bid_volume,
-                ask_volume=ask_volume,
-            )
+    def parse_artifacts(self, group: Sequence[RawArtifact]) -> Iterator[ProviderTick]:
+        """A `.bi5` hour is self-contained - `group` is always a singleton in
+        practice (ADR 0004) - but the loop costs nothing and keeps this
+        adapter honest about the general contract."""
+        for artifact in group:
+            if not artifact.content:
+                continue  # a genuinely empty hour (e.g. weekend close) has no ticks
+            try:
+                raw = lzma.decompress(artifact.content)
+            except lzma.LZMAError as exc:
+                raise ArtifactParseError(
+                    f"artifact {artifact.source_uri} is not a valid LZMA stream: {exc}"
+                ) from exc
+            if len(raw) % _RECORD_SIZE != 0:
+                raise ArtifactParseError(
+                    f"artifact {artifact.source_uri} decompressed to {len(raw)} bytes, "
+                    f"not a multiple of the {_RECORD_SIZE}-byte record size"
+                )
+            hour_start = artifact.requested_start
+            for offset in range(0, len(raw), _RECORD_SIZE):
+                ms, ask_raw, bid_raw, ask_volume, bid_volume = _RECORD_STRUCT.unpack_from(
+                    raw, offset
+                )
+                yield ProviderTick(
+                    instrument=artifact.instrument,
+                    timestamp=hour_start + timedelta(milliseconds=ms),
+                    bid=bid_raw / self.point_value,
+                    ask=ask_raw / self.point_value,
+                    bid_volume=bid_volume,
+                    ask_volume=ask_volume,
+                )

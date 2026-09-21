@@ -39,7 +39,7 @@ def _bi5(records: list[tuple[int, int, int, float, float]]) -> bytes:
 def test_parses_records_with_documented_point_value():
     provider = DukascopyProvider(price_precision=5)
     content = _bi5([(0, 108234, 108220, 1.5, 2.0), (1500, 108240, 108225, 1.0, 1.0)])
-    ticks = list(provider.parse_artifact(_artifact(content)))
+    ticks = list(provider.parse_artifacts([_artifact(content)]))
     assert len(ticks) == 2
     assert ticks[0].bid == pytest.approx(1.08220)
     assert ticks[0].ask == pytest.approx(1.08234)
@@ -52,20 +52,20 @@ def test_parses_records_with_documented_point_value():
 def test_empty_hour_yields_no_ticks_without_error():
     """A genuinely empty artifact (e.g. a weekend hour) is not an error."""
     provider = DukascopyProvider(price_precision=5)
-    assert list(provider.parse_artifact(_artifact(b""))) == []
+    assert list(provider.parse_artifacts([_artifact(b"")])) == []
 
 
 def test_non_lzma_bytes_raise_artifact_parse_error():
     provider = DukascopyProvider(price_precision=5)
     with pytest.raises(ArtifactParseError):
-        list(provider.parse_artifact(_artifact(b"not an lzma stream")))
+        list(provider.parse_artifacts([_artifact(b"not an lzma stream")]))
 
 
 def test_truncated_record_raises_artifact_parse_error():
     provider = DukascopyProvider(price_precision=5)
     raw = struct.pack(">Iiiff", 0, 108234, 108220, 1.0, 1.0)[:-3]  # not a multiple of 20 bytes
     with pytest.raises(ArtifactParseError):
-        list(provider.parse_artifact(_artifact(lzma.compress(raw))))
+        list(provider.parse_artifacts([_artifact(lzma.compress(raw))]))
 
 
 def test_url_uses_zero_indexed_month():
