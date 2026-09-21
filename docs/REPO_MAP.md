@@ -53,10 +53,14 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
   - `service.py` — V0.2. `MarketDataService`: a `MarketDataSource`-compatible
     facade that runs a `MarketDataProvider` through the full pipeline below.
   - `providers/` — V0.2. `base.py` defines `MarketDataProvider`
-    (`fetch_artifacts` + `parse_artifact`), `RawArtifact`, `ProviderTick`.
-    `dukascopy.py` is the only module allowed to know Dukascopy's URL scheme
-    and `.bi5` byte layout (documented `[UNVERIFIED]` pending a real fetch -
-    see `docs/STATUS.md`).
+    (`fetch_artifacts` + `parse_artifacts`, the latter taking a *group* of
+    artifacts sharing one requested window - ADR 0004), `RawArtifact`,
+    `ProviderTick`. `dukascopy.py` is the only module allowed to know
+    Dukascopy's `.bi5` URL scheme and byte layout (documented `[UNVERIFIED]`
+    pending a real fetch - see `docs/STATUS.md`; still blocked).
+    `dukascopy_csv_export.py` ingests Dukascopy's website CSV export
+    instead (separate BID/ASK files, local, not networked) - validated
+    against a real sample, see `docs/STATUS.md`.
   - `pipeline/` — V0.2, provider-agnostic. `raw_store.py` (content-addressed,
     immutable artifact cache), `raw_validate.py` (checksum/structural checks
     only), `normalize.py` (tick -> `MarketBar` aggregation, documented
@@ -131,11 +135,13 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
 - `tests/unit/` — `test_point_in_time.py`, `test_accounting.py`,
   `test_execution.py`, `test_risk_engine.py` — the invariant tests live here
   (see the table in `CLAUDE.md`), tagged `@pytest.mark.invariant`.
-  V0.2 adds `test_dukascopy_adapter.py`, `test_raw_store.py`,
-  `test_canonical_validate.py`, `test_market_data_service.py` (the last
-  includes the adversarial PIT test and the cross-provider invariant test,
-  both `@pytest.mark.invariant`). All run offline against hand-built fixture
-  bytes; none make a network call.
+  V0.2 adds `test_dukascopy_adapter.py`, `test_dukascopy_csv_export_adapter.py`,
+  `test_raw_store.py`, `test_canonical_validate.py`, `test_market_data_service.py`
+  (the last includes the adversarial PIT test and the cross-provider
+  invariant test, both `@pytest.mark.invariant`). All run offline against
+  hand-built, clearly-fake fixture bytes; none make a network call and none
+  contain the real Dukascopy sample used for validation (see
+  `docs/STATUS.md`).
 - `tests/integration/test_engine.py` — full-engine determinism, restart/replay,
   one-decision-per-bar.
 - `tests/regression/test_regression.py` — repo-wide regressions, including
@@ -158,6 +164,10 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
   boundary (FETCH -> RAW STORE -> PARSE -> NORMALIZE -> CANONICAL VALIDATE ->
   CANONICAL STORE), why Dukascopy stays adapter-only, and the reproducible
   canonical-identity design.
+- `docs/adr/0004-parse-stage-artifact-groups.md` — why PARSE takes a group
+  of artifacts rather than one, needed to pair Dukascopy's website CSV
+  export's separate BID/ASK files without changing anything downstream of
+  PARSE.
 - Any change to authority boundaries, persistence semantics or risk
   invariants requires a new ADR first.
 

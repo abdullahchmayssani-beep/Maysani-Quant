@@ -9,9 +9,12 @@ belongs in the master reference or in code/tests, not here.
 byte-for-byte unchanged; CSV/synthetic path re-verified end-to-end after
 every V0.2 change).
 
-**V0.2 — provider-independent market data pipeline implemented, not yet
-exercised against real data.** See `docs/adr/0003-provider-independent-market-data.md`
-for the design and "V0.2 status" below for what is and isn't proven.
+**V0.2 — provider-independent market data pipeline implemented and validated
+against a real (manually-supplied) Dukascopy sample.** The `.bi5` network
+path is still untested against real bytes (egress blocked). See
+`docs/adr/0003-provider-independent-market-data.md` and
+`docs/adr/0004-parse-stage-artifact-groups.md` for the design, and "V0.2
+status" below for exactly what is and isn't proven.
 
 ## Branch / commit
 
@@ -87,15 +90,60 @@ the full design. Summary:
 - 114 tests pass (was 88; +25 new tests, +1 net from splitting one
   regression test - see "Test suite change" below), `pytest -m invariant`
   47 pass (was 45), `ruff check .` clean.
-- **Not yet done, and blocked in this sandbox:** fetching any real
-  Dukascopy artifact. `datafeed.dukascopy.com:443` is denied by this
-  session's egress policy (403 on CONNECT; confirmed via the proxy's own
-  status endpoint, `recentRelayFailures`). Every test in the new suite runs
-  against hand-built fixture bytes in the documented `.bi5` shape, never
-  real downloaded data. `configs/v0_2.yaml`'s Dukascopy window has not been
-  fetched, so **no real-data baseline exists yet** and the $50/margin
-  feasibility question (Section 23) has not been re-examined with real
-  spread data.
+- **Real-data validation: done, via a different ingestion path than
+  originally planned.** `datafeed.dukascopy.com:443` (the `.bi5` network
+  fetch) is still denied by this sandbox's egress policy (403 on CONNECT,
+  confirmed via the proxy's status endpoint). The user instead supplied a
+  real Dukascopy **website CSV export** (EUR/USD BID+ASK, 2026-09-17
+  12:00-13:00 UTC, 5293 rows/side) as a manually-provided sample. ADR 0004
+  adds `data/providers/dukascopy_csv_export.py` for this ingestion path
+  (FETCH reads local files instead of the network; everything downstream -
+  RAW STORE, PARSE, NORMALIZE, CANONICAL VALIDATE, CANONICAL STORE - is
+  unchanged). This sample has been run through the full pipeline end to end
+  and validated (see "Real-data validation results" below); the raw CSVs
+  and everything derived from them live only in the gitignored `data/raw/`
+  and `data/cache/` and were never committed.
+- **Still not done:** any fetch over `.bi5`/the network path itself. That
+  half of ADR 0003's original scope remains blocked by the same egress
+  policy; `configs/v0_2.yaml`'s `data.provider: dukascopy` window has not
+  been fetched. The $50/margin feasibility question (Section 23) has not
+  been re-examined with a dataset large enough to run a strategy against
+  (one hour of M1 bars is enough to validate the pipeline, not to backtest).
+
+### Real-data validation results (2026-09-17 12:00-13:00 UTC EUR/USD sample)
+
+Ingested via `DukascopyCsvExportProvider` -> `MarketDataService` (M1
+timeframe, `require_bid_ask=True`), exactly as any other provider would be:
+
+- **Pairing/alignment:** verified, not assumed - both files have identical
+  row counts (5293) and identical timestamps at every row index; pairing by
+  index then gives `ask >= bid` at all 5293 rows and a realistic spread
+  distribution (mostly 0.1-1.5 pips). See ADR 0004 for the full check.
+- **Canonical bars:** 60 M1 bars, zero data-quality issues
+  (`validation.severity == VALID`).
+- **Volume conservation:** sum of all raw tick volumes (bid+ask,
+  19,742,370,000 raw units) exactly equals the sum of canonical bar volumes
+  - the tick-to-bar aggregation is lossless.
+- **PIT behaviour:** `PointInTimeView` at an as_of mid-sample correctly
+  exposed only the bars up to and including that point and excluded the
+  rest, on this real dataset (not just the earlier synthetic/fixture
+  adversarial test).
+- **Provenance/reproducibility:** two raw artifacts stored and
+  checksum-verified (labelled `bid`/`ask` in their manifests); re-running
+  the identical ingestion reproduces the identical `canonical_identity_hash`.
+- **Bug found and fixed:** `CanonicalManifest.actual_start` was computed from
+  the first bar's `end_time` instead of its `start_time`, silently reporting
+  the coverage window as starting one bar-length later than it actually did.
+  Fixed, with a regression assertion added.
+- **Fidelity limitation confirmed on real data:** the website export's
+  timestamps are 1-second resolution (up to 12 ticks share one timestamp in
+  this sample), versus `.bi5`'s millisecond resolution - immaterial to M1/H1
+  bar aggregation, but this ingestion path could never support a genuine
+  tick-level backtest.
+- **Volume units:** still `[UNVERIFIED]` against Dukascopy's own
+  documentation; the raw values (e.g. 900000, 1800000) are consistent with
+  "volume in millions of base currency x 1,000,000" but this adapter passes
+  them through unscaled rather than asserting that interpretation.
 
 ### Test suite change (flagged, not silent)
 
@@ -115,23 +163,32 @@ identical in scope to before.
 
 ### Known limitations recorded in ADR 0003 (not defects)
 
-- Dukascopy's byte format is documented from public open-source-tool
+- Dukascopy's `.bi5` byte format is documented from public open-source-tool
   knowledge, not from Dukascopy's own docs (this session cannot reach
   `datafeed.dukascopy.com` to verify) - marked `[UNVERIFIED]` in
-  `data/providers/dukascopy.py`'s module docstring until a real fetch
-  confirms it.
+  `data/providers/dukascopy.py`'s module docstring until a real `.bi5` fetch
+  confirms it. (The website CSV export path, by contrast, **has** now been
+  validated against a real sample - see above.)
 - Weekend-gap detection is a fixed Fri 21:00 UTC-Sun 21:00 UTC heuristic,
   not a holiday/session calendar; a market holiday will surface as
   `SUSPICIOUS_GAP` (WARNING), not silently as OK.
 - Re-running `MarketDataService` always re-fetches raw artifacts over the
-  network; only the final canonical-store write is cache-idempotent (no
-  per-hour "already fetched" index yet).
+  network (or re-reads local files, for the CSV export path); only the
+  final canonical-store write is cache-idempotent (no per-window
+  "already fetched" index yet).
+- The website CSV export's 1-second timestamp resolution and its
+  `[UNVERIFIED]` volume units (see above) are this ingestion path's own
+  limitations, distinct from `.bi5`'s.
 
 ## Current blocker
 
-Fetching real Dukascopy data. This sandbox's egress policy denies
-`datafeed.dukascopy.com:443` (403 on CONNECT). The full pipeline is built
-and tested offline; the next step (prove it on a small real sample, then run
-the frozen strategy against a real dataset and report results, per the
-approved V0.2 plan) requires network access this session does not have.
-`configs/v0_2.yaml` is ready to run as soon as that access exists.
+Fetching data over the network at all. This sandbox's egress policy denies
+`datafeed.dukascopy.com:443` (403 on CONNECT), so the `.bi5` provider
+remains untested against real bytes and `configs/v0_2.yaml`'s declared
+one-week window has not been fetched. The website-CSV-export path is no
+longer blocked - it works end to end against real data, manually supplied -
+but it only covers what a human downloads by hand, one export at a time, so
+it doesn't substitute for the `.bi5` provider at any real scale. The next
+step (either get network access for `.bi5`, or manually assemble enough CSV
+exports to run the frozen strategies against a real multi-day dataset and
+report results, per the approved V0.2 plan) has not been done.
