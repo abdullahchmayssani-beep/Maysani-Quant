@@ -1,0 +1,117 @@
+# =============================================================================
+# Maysani Quant V0.1 configuration
+#
+# Section 21.8: every parameter that can influence a result lives here and is
+# hashed into the experiment record. There are no hidden tuning constants in
+# code paths or prompts.
+#
+# EVERY NUMBER BELOW IS PROVISIONAL. None of it is validated, none of it is
+# broker-derived, and none of it should be described as realistic until it is
+# measured against a real dataset and a real broker's terms. The first goal is
+# constraint correctness, not parameter quality (Section 12).
+# =============================================================================
+version: v0.1.0
+
+experiment:
+  name: v0_1_baseline
+  hypothesis: >
+    Establish that the V0.1 pipeline enforces point-in-time integrity, cost
+    accounting, deterministic risk and reproducibility. No claim is made about
+    the profitability of either baseline strategy.
+
+instrument:
+  symbol: EURUSD
+  base_currency: EUR
+  quote_currency: USD
+  price_precision: 5        # pipette pricing
+  size_step: 1.0            # units of base currency
+  min_order_size: 1.0       # PROVISIONAL - real minimum is broker-specific
+  contract_multiplier: 1.0
+
+account:
+  currency: USD             # quote currency == account currency in V0.1
+  initial_equity: 50.00     # the canonical organism birth capital
+  death_threshold: 5.00     # PROVISIONAL. In live this must incorporate broker
+                            # margin/liquidation mechanics and sit ABOVE them.
+
+data:
+  path: data/SYNTHETIC_eurusd_d1.csv
+  timeframe: D1
+  timestamp_column: timestamp
+  price_kind: midpoint      # midpoint | bidask
+  available_time_policy: bar_close   # bar_close | bar_close_plus_lag
+  available_time_lag_seconds: 0
+
+costs:
+  scenario_name: baseline
+  spread_model: fixed       # fixed | dataset (dataset requires bid/ask columns)
+  fixed_spread_price: 0.00012   # 1.2 pipettes. PROVISIONAL scenario, not a quote.
+  slippage_price: 0.00002       # PROVISIONAL. Run the stress scenario too.
+  commission_per_unit: 0.0
+  commission_minimum: 0.0
+  financing_per_unit_per_day_long: 0.0    # hook only; real swap needs the
+  financing_per_unit_per_day_short: 0.0   # point-in-time rate layer (21.6)
+
+execution:
+  fill_policy: next_bar_open      # the only policy V0.1 implements
+  ambiguous_bar_policy: adverse   # adverse | skip - never favourable
+
+risk:
+  config_version: risk-v0.1.0
+  risk_per_trade_pct: 0.01        # 1% of current equity at stop
+  max_leverage: 5.0
+  margin_requirement_pct: 0.20
+  max_margin_utilisation: 0.50
+  max_open_risk_pct: 0.02         # aggregate stop-risk across the book
+  daily_loss_limit_pct: 0.03
+  max_drawdown_pct: 0.20
+  drawdown_throttle:              # [drawdown_depth, size_multiplier]
+    - [0.05, 1.00]
+    - [0.10, 0.50]
+    - [0.15, 0.25]
+  max_spread_price: 0.0005
+  max_realized_vol: 0.05
+  vol_target: null                # null disables volatility targeting
+  max_staleness_bars: 2.0
+  min_stop_distance_price: 0.0001
+  max_stop_distance_price: 0.05
+  event_window_blocks_entry: true # no event calendar in V0.1; gate is inert
+
+features:
+  momentum_lookback: 20
+  ma_fast: 10
+  ma_slow: 50
+  vol_lookback: 20
+  zscore_lookback: 20
+  atr_lookback: 14
+
+# Baselines are permanent controls (Section 13.7), not optional extras.
+strategies:
+  - id: no_trade_v1
+    hypothesis: Control. Any strategy must beat doing nothing, net of costs.
+  - id: buy_and_hold_v1
+    hypothesis: Control for directional drift in the sample.
+  - id: momentum_v1
+    hypothesis: >
+      A transparent MA-spread trend rule with a volatility filter produces
+      positive net-of-cost edge on unseen EUR/USD data. Not yet tested.
+    params:
+      entry_threshold: 0.002
+      exit_threshold: 0.0005
+      vol_filter_max: 0.02
+      stop_atr_multiple: 2.0
+  - id: mean_reversion_v1
+    hypothesis: >
+      Falsification control. A transparent z-score reversion rule is expected
+      to fail net of costs; if it does not, the sample needs scrutiny.
+    params:
+      entry_z: 1.5
+      exit_z: 0.5
+      vol_filter_max: 0.02
+      stop_atr_multiple: 2.0
+
+journal:
+  path: runs
+
+report:
+  output_dir: runs

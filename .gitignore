@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Run artefacts: journals, reports and checkpoints are per-run outputs.
+# The experiment REGISTRY is deliberately NOT ignored - see docs/adr/0002.
+runs/*.jsonl
+runs/*.checkpoint.json
+runs/report_*.txt
+!runs/experiments.jsonl
+
+# Market data is licensed; never commit vendor data.
+data/*.csv
+!data/SYNTHETIC_*.csv
