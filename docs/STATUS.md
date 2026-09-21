@@ -12,11 +12,18 @@ every V0.2 change).
 **V0.2 — provider-independent market data pipeline implemented and validated
 against real Dukascopy EUR/USD data.** The real-data sample came in through
 a manual CSV-export validation fixture/input path (ADR 0004), not through
-automated acquisition - the automated `.bi5` network fetch remains untested
-against real bytes and is the current blocker (egress denied in this
-sandbox). See `docs/adr/0003-provider-independent-market-data.md` and
-`docs/adr/0004-parse-stage-artifact-groups.md` for the design, and "V0.2
-status" below for exactly what is and isn't proven.
+automated acquisition.
+
+**V0.2.1 — automatic `.bi5` acquisition (caching, bounded retry, CLI)
+implemented and fully tested offline.** It has **not** been exercised
+against the real Dukascopy endpoint - this sandbox's egress policy denies
+`datafeed.dukascopy.com`, so that remains the current blocker, now purely a
+network-access problem rather than a missing-feature problem. See
+`docs/adr/0003-provider-independent-market-data.md`,
+`docs/adr/0004-parse-stage-artifact-groups.md`, and
+`docs/adr/0005-automatic-acquisition.md` for the design, and "V0.2.1 status"
+below for exactly what is and isn't proven, plus the exact command to run
+against the real endpoint once network access exists.
 
 ## Branch / commit
 
@@ -91,9 +98,10 @@ for the full design. Summary:
 - `backtest/runner.py::build_source` dispatches on `config.data_provider`;
   the CSV/synthetic path is unchanged and re-verified end-to-end
   (`validate-data`/`backtest --config configs/v0_1.yaml` after every batch).
-- 114 tests pass (was 88; +25 new tests, +1 net from splitting one
-  regression test - see "Test suite change" below), `pytest -m invariant`
-  47 pass (was 45), `ruff check .` clean.
+- 122 tests passed at the end of this stage (was 88; +25 new tests, +1 net
+  from splitting one regression test - see "Test suite change" below),
+  `pytest -m invariant` 47 passed. V0.2.1 (below) adds another 12, for 134
+  total as of this section's last update.
 - **Real-data validation: done, via a manual validation fixture/input path,
   not via automated acquisition.** `datafeed.dukascopy.com:443` (the `.bi5`
   network fetch - the intended automated acquisition mechanism) is still
@@ -182,26 +190,113 @@ identical in scope to before.
 - Weekend-gap detection is a fixed Fri 21:00 UTC-Sun 21:00 UTC heuristic,
   not a holiday/session calendar; a market holiday will surface as
   `SUSPICIOUS_GAP` (WARNING), not silently as OK.
-- Re-running `MarketDataService` always re-fetches raw artifacts over the
-  network (or re-reads local files, for the CSV export path); only the
-  final canonical-store write is cache-idempotent (no per-window
-  "already fetched" index yet).
+- ~~Re-running `MarketDataService` always re-fetches raw artifacts over the
+  network~~ **fixed in V0.2.1** - `DukascopyProvider` now checks a
+  per-window request index before every fetch; see "V0.2.1 status" below.
+  (`DukascopyCsvExportProvider` still re-reads its local files on every run
+  - cheap, and not worth optimizing for a validation-only fixture path.)
 - The website CSV export's 1-second timestamp resolution and its
   `[UNVERIFIED]` volume units (see above) are this ingestion path's own
   limitations, distinct from `.bi5`'s.
 
+## V0.2.1 status (this session) - automatic acquisition
+
+**Objective:** complete `DukascopyProvider`'s `.bi5` path so it acquires
+data automatically (instrument + bounded UTC window in, canonical dataset
+out) with no browser/manual export involved, per
+`docs/adr/0005-automatic-acquisition.md`.
+
+**Acquisition code implemented and tested offline - not yet run against the
+real Dukascopy endpoint:**
+
+- `data/pipeline/raw_store.py`: a request index
+  (`provider`, `instrument`, `requested_start`, `requested_end` -> sha256)
+  distinct from content addressing, so a repeat request for an
+  already-cached window skips the network entirely. Self-healing: a
+  missing/corrupt cache entry is treated as a miss, never a crash.
+- `data/providers/dukascopy.py`: per-hour outcomes
+  (`downloaded`/`cache_hit`/`missing`/`failed`); a 4xx is never retried
+  (recorded `missing` immediately), everything else (timeouts, connection
+  errors, 5xx) retries up to a hard-bounded `max_attempts` with exponential
+  backoff; a missing/failed hour is skipped (not fabricated) and does not
+  abort the rest of the window - the resulting hole surfaces as a normal
+  `SUSPICIOUS_GAP`/`WEEKEND_GAP` in canonical validation. PARSE-stage
+  failures (corrupt-but-successfully-downloaded bytes) still raise, exactly
+  as before - retry/skip logic lives only in FETCH.
+- `data/service.py`: `MarketDataService` auto-wires its own raw store into
+  any provider that exposes a `raw_store` attribute; `DukascopyCsvExportProvider`
+  has no such attribute and is unaffected.
+- `cli.py`: new `acquire-dukascopy --instrument --start --end [...]`
+  command (see "External validation" below for the exact real-endpoint
+  invocation). Prints requested window; artifacts requested/downloaded/
+  cache-hit/missing/failed (with per-hour detail); raw artifact hashes;
+  canonical identity; bar coverage; quality status. Non-zero exit on any
+  validation failure or a zero-bar run (so "the network is unreachable"
+  cannot look like a silent, trivially-successful empty run).
+- 12 new tests (`tests/unit/test_dukascopy_acquisition.py`,
+  `tests/unit/test_cli_acquire_dukascopy.py`) cover every scenario the
+  V0.2.1 objective named: successful acquisition, cache hit (proven via a
+  call-counting fake - zero network calls on the second run), retry then
+  success with asserted exponential backoff, persistent timeout exhausting
+  bounded retries, non-retryable HTTP 4xx, HTTP 5xx treated as transient,
+  a missing hour not aborting the rest of the window, corrupt-but-downloaded
+  bytes still raising at PARSE, a confirmed-empty 200 correctly distinguished
+  from a 404, self-healing on a partially-deleted cache, and the full CLI
+  path via a patched `urllib.request.urlopen` (never a CLI-only test seam).
+  None open a socket or sleep for a real second.
+- 134 tests pass in total (up from 122), `pytest -m invariant` still 47
+  passed, `ruff check .` clean, `configs/v0_1.yaml` verified byte-for-byte
+  unchanged and the CSV/synthetic path re-verified identical
+  (`maysani-quant validate-data --config configs/v0_1.yaml` unchanged
+  `data_hash`) after this batch.
+
+**Manually confirmed, not an automated test:** invoking
+`acquire-dukascopy` against the real (blocked) endpoint from this sandbox
+fails cleanly - bounded retries, an explicit `failed` outcome, exit code 2,
+no hang - rather than crashing or hanging. This is evidence the failure
+path is graceful, **not** evidence that acquisition works against a real,
+reachable Dukascopy endpoint. That remains unverified.
+
+**Not done, and not claimed:** no `.bi5` byte has been successfully
+downloaded from Dukascopy in this or any prior session. The `[UNVERIFIED]`
+byte-format notes in `data/providers/dukascopy.py` are unchanged by this
+work - they can only be confirmed by a real fetch.
+
+### External validation (no code changes required)
+
+Run this from a runtime that has connectivity to
+`datafeed.dukascopy.com`, escalating the window as each step is confirmed
+clean:
+
+```bash
+# 1 hour
+maysani-quant acquire-dukascopy --instrument EURUSD \
+  --start 2024-01-08T00:00:00Z --end 2024-01-08T01:00:00Z
+
+# 1 day (re-run: the first hour above becomes a cache hit)
+maysani-quant acquire-dukascopy --instrument EURUSD \
+  --start 2024-01-08T00:00:00Z --end 2024-01-09T00:00:00Z
+
+# 1 week
+maysani-quant acquire-dukascopy --instrument EURUSD \
+  --start 2024-01-08T00:00:00Z --end 2024-01-15T00:00:00Z
+```
+
+Defaults write to `data/raw/` and `data/cache/canonical/` (gitignored); pass
+`--raw-root`/`--canonical-root` to point elsewhere. Check the printed
+`downloaded`/`cache hits`/`missing`/`failed` counts and `quality status`
+line at each step before moving to the next window. Confirming this closes
+the one remaining `[UNVERIFIED]` item in `data/providers/dukascopy.py`.
+
 ## Current blocker
 
-**Automatic (`.bi5` network) data acquisition.** This sandbox's egress
-policy denies `datafeed.dukascopy.com:443` (403 on CONNECT, confirmed via
-the proxy's status endpoint) - `.bi5` network acquisition **cannot be
-tested in this sandbox** because of that egress restriction, so the `.bi5`
-provider remains untested against real bytes and `configs/v0_2.yaml`'s
-declared one-week window has not been fetched. The website-CSV-export path
-(ADR 0004) is not blocked and has been validated end to end against real
-data, but it is a manual validation fixture/input path only - it requires a
-human to download every window by hand, one export at a time, and does not
-substitute for `.bi5` at any real acquisition scale. The next step (either
-get network access for `.bi5`, or manually assemble enough CSV exports to
-run the frozen strategies against a real multi-day dataset and report
-results, per the approved V0.2 plan) has not been done.
+**Network access to `datafeed.dukascopy.com` from this sandbox.** The
+acquisition code itself (caching, retry, CLI) is complete and fully tested
+offline (V0.2.1, above); the only thing separating it from real use is
+running it from an environment that isn't egress-blocked, which is an
+infrastructure/environment question, not a remaining code task. The
+website-CSV-export path (ADR 0004) remains available as a manual validation
+fixture only and does not substitute for automatic acquisition at any real
+scale. Commercial redistribution/licensing status for Dukascopy data
+(Section 23) is unaffected by this work and remains unresolved - acquisition
+mechanics and licensing are independent questions.

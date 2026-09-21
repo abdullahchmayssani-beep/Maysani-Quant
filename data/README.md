@@ -71,7 +71,10 @@ Two new local, gitignored directories hold everything the Dukascopy provider
 - `data/raw/<provider>/<instrument>/<sha256[:2]>/<sha256>.bin` — the
   provider's original artifact bytes, verbatim, plus a `.manifest.json`
   sidecar (SHA-256, provider/version, requested window, retrieval time).
-  Content-addressed: identical bytes are never rewritten.
+  Content-addressed: identical bytes are never rewritten. V0.2.1 (ADR 0005)
+  added a small `_requests/` index alongside it, mapping a request window
+  to the sha256 that answered it, so `DukascopyProvider` can skip a repeat
+  network fetch for a window it already has - see `RawArtifactStore.find_by_request`.
 - `data/cache/canonical/<provider>/<instrument>/<canonical_identity_hash>.csv`
   — validated, normalized `MarketBar`s, plus a `.manifest.json` recording the
   reproducible identity (raw hashes + provider + instrument + window +
@@ -80,12 +83,23 @@ Two new local, gitignored directories hold everything the Dukascopy provider
 
 Set `data.provider: dukascopy` in a config (see `configs/v0_2.yaml`) to use
 this path instead of a CSV file; `data.provider: csv` (or omitting the key)
-is exactly V0.1's behaviour, unchanged.
+is exactly V0.1's behaviour, unchanged. Or acquire directly without a full
+backtest config: `maysani-quant acquire-dukascopy --instrument EURUSD
+--start <UTC ISO> --end <UTC ISO>` (V0.2.1).
 
 **As of this commit, no real Dukascopy artifact has been fetched in this
 repository.** This session's network egress policy denies
-`datafeed.dukascopy.com`; the pipeline is built and tested entirely against
-offline fixture bytes (see `tests/unit/test_dukascopy_adapter.py` and
-`tests/unit/test_market_data_service.py`). Numbers produced by
-`configs/v0_2.yaml` will not exist until that access is available and the
-pipeline has actually been run against it.
+`datafeed.dukascopy.com`; the acquisition code (fetch, cache, bounded
+retry/backoff, the `acquire-dukascopy` CLI command) is complete and tested
+entirely against offline fixture bytes (see
+`tests/unit/test_dukascopy_acquisition.py` and
+`tests/unit/test_cli_acquire_dukascopy.py`), never a real socket. Numbers
+produced by `configs/v0_2.yaml` or `acquire-dukascopy` against the real
+endpoint will not exist until that access is available and the command has
+actually been run - see `docs/STATUS.md`'s "External validation" section
+for the exact commands (no code change needed).
+
+The Dukascopy website CSV-export path (`dukascopy_csv_export.py`, ADR 0004)
+remains available and has been validated against a real sample, but it is a
+manual validation fixture only - see `docs/STATUS.md` - not a substitute
+for `acquire-dukascopy` at any real scale.

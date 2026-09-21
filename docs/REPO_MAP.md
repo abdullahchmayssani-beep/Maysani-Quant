@@ -57,17 +57,23 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
     artifacts sharing one requested window - ADR 0004), `RawArtifact`,
     `ProviderTick`. `dukascopy.py` is the only module allowed to know
     Dukascopy's `.bi5` URL scheme and byte layout (documented `[UNVERIFIED]`
-    pending a real fetch - see `docs/STATUS.md`; still blocked).
-    `dukascopy_csv_export.py` ingests Dukascopy's website CSV export
-    instead (separate BID/ASK files, local, not networked) - validated
-    end-to-end against a real sample (see `docs/STATUS.md`), but it is a
-    **manual validation fixture/input path, not the long-term acquisition
+    pending a real fetch - see `docs/STATUS.md`). V0.2.1 (ADR 0005) added
+    bounded retry/backoff, per-hour outcome reporting
+    (`downloaded`/`cache_hit`/`missing`/`failed`), and cache-aware fetch (an
+    optional `raw_store` attribute, auto-wired by `MarketDataService`) - all
+    implemented and tested offline; real network acquisition is still
+    blocked and unverified in this sandbox (see `docs/STATUS.md`'s "External
+    validation" section for the exact command to run once network access
+    exists - no code change needed). `dukascopy_csv_export.py` ingests
+    Dukascopy's website CSV export instead (separate BID/ASK files, local,
+    not networked) - validated end-to-end against a real sample, but it is
+    a **manual validation fixture/input path, not the long-term acquisition
     mechanism** (ADR 0004): it requires a human to download files by hand
-    and doesn't scale to a real backtest dataset. The `.bi5` network fetch
-    remains the intended automated acquisition path and is still blocked
-    and unverified against real bytes in this sandbox.
+    and doesn't scale to a real backtest dataset.
   - `pipeline/` — V0.2, provider-agnostic. `raw_store.py` (content-addressed,
-    immutable artifact cache), `raw_validate.py` (checksum/structural checks
+    immutable artifact cache; V0.2.1 added a request index keyed by
+    `(provider, instrument, window)` so a cache-aware provider can skip a
+    repeat fetch - ADR 0005), `raw_validate.py` (checksum/structural checks
     only), `normalize.py` (tick -> `MarketBar` aggregation, documented
     policy), `canonical_validate.py` (VALID/WARNING/INVALID severity,
     FX weekend-gap-aware - a different module/report type from
@@ -143,10 +149,13 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
   V0.2 adds `test_dukascopy_adapter.py`, `test_dukascopy_csv_export_adapter.py`,
   `test_raw_store.py`, `test_canonical_validate.py`, `test_market_data_service.py`
   (the last includes the adversarial PIT test and the cross-provider
-  invariant test, both `@pytest.mark.invariant`). All run offline against
-  hand-built, clearly-fake fixture bytes; none make a network call and none
-  contain the real Dukascopy sample used for validation (see
-  `docs/STATUS.md`).
+  invariant test, both `@pytest.mark.invariant`). V0.2.1 adds
+  `test_dukascopy_acquisition.py` (cache hit, retry/backoff, timeout, 4xx
+  vs 5xx, missing hour, corrupt bytes, cache self-healing) and
+  `test_cli_acquire_dukascopy.py` (the CLI path, offline, via a patched
+  `urllib.request.urlopen`). All run offline against hand-built, clearly-fake
+  fixture bytes; none make a network call and none contain the real
+  Dukascopy sample used for validation (see `docs/STATUS.md`).
 - `tests/integration/test_engine.py` — full-engine determinism, restart/replay,
   one-decision-per-bar.
 - `tests/regression/test_regression.py` — repo-wide regressions, including
@@ -173,6 +182,9 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
   of artifacts rather than one, needed to pair Dukascopy's website CSV
   export's separate BID/ASK files without changing anything downstream of
   PARSE.
+- `docs/adr/0005-automatic-acquisition.md` — the request-index cache,
+  bounded retry/non-retry-on-4xx policy, per-hour non-fatal outcome
+  reporting, and the `acquire-dukascopy` CLI command (V0.2.1).
 - Any change to authority boundaries, persistence semantics or risk
   invariants requires a new ADR first.
 
@@ -188,3 +200,10 @@ implemented in `src/maysani_quant/cli.py`):
 - `maysani-quant make-synthetic-dataset --out data/SYNTHETIC_...csv` — test
   fixture only; output is always named `SYNTHETIC_*`, flagged per-bar, and
   banner-warned in every report.
+- `maysani-quant acquire-dukascopy --instrument EURUSD --start <UTC ISO>
+  --end <UTC ISO>` (V0.2.1, ADR 0005) — automatic `.bi5` acquisition:
+  downloads (or reuses cached) hourly artifacts for the window, runs them
+  through the existing pipeline, and prints a summary (requested/downloaded/
+  cache-hit/missing/failed, raw hashes, canonical identity, bar coverage,
+  quality status). See `docs/STATUS.md`'s "External validation" section for
+  the exact 1-hour/1-day/1-week commands to run once network access exists.
