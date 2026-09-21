@@ -192,15 +192,45 @@ def test_config_hash_changes_when_a_risk_limit_changes(tmp_path: Path):
     assert load_config(changed).config_hash != base.config_hash
 
 
-def test_no_llm_or_network_dependency_in_v0_1():
-    """Section 21.1: V0.1 has no LLM dependency. Checked at the import level."""
+def test_no_llm_dependency_anywhere():
+    """Section 22 (Never): no LLM SDK dependency, in any phase, anywhere in
+    the package. This is the actual named invariant and it is never scoped
+    or narrowed - unlike the generic-network check below, which V0.2 legitimately
+    needs to scope (see ADR 0003)."""
     import maysani_quant  # noqa: F401
 
     source_root = REPO / "src" / "maysani_quant"
-    forbidden = ("anthropic", "openai", "requests", "httpx", "langchain", "urllib.request")
+    forbidden_llm = ("anthropic", "openai", "langchain")
     for path in source_root.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        for name in forbidden:
+        for name in forbidden_llm:
+            assert f"import {name}" not in text and f"from {name}" not in text, (
+                f"{path.relative_to(REPO)} imports {name}"
+            )
+
+
+def test_no_network_dependency_outside_the_provider_boundary():
+    """V0.1 had zero network I/O anywhere in the package (Section 21.1).
+
+    V0.2 (ADR 0003) introduces exactly one sanctioned exception:
+    `data/providers/`, the only place allowed to FETCH from an external
+    vendor. Everywhere else - features, strategies, risk, execution,
+    portfolio, backtest, and even the rest of `data/` (interfaces, csv
+    source, validation, the pipeline, the service facade) - must stay as
+    free of hidden networking as V0.1 was. A network import appearing
+    anywhere outside that one directory is exactly the kind of silent
+    authority-chain violation CLAUDE.md forbids.
+    """
+    import maysani_quant  # noqa: F401
+
+    source_root = REPO / "src" / "maysani_quant"
+    provider_boundary = source_root / "data" / "providers"
+    forbidden_network = ("requests", "httpx", "urllib.request")
+    for path in source_root.rglob("*.py"):
+        if provider_boundary in path.parents:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for name in forbidden_network:
             assert f"import {name}" not in text and f"from {name}" not in text, (
                 f"{path.relative_to(REPO)} imports {name}"
             )

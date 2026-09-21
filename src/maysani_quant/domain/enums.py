@@ -55,6 +55,28 @@ class QualityFlag(str, Enum):
     INCONSISTENT_OHLC = "INCONSISTENT_OHLC"
     NEGATIVE_SPREAD = "NEGATIVE_SPREAD"
     SYNTHETIC = "SYNTHETIC"
+    # V0.2 additions (ADR 0003) - canonical-validation-only flags. Never
+    # produced by data/validation.py's V0.1 validate_bars.
+    NON_FINITE = "NON_FINITE"
+    TIMEZONE_NAIVE = "TIMEZONE_NAIVE"
+    WEEKEND_GAP = "WEEKEND_GAP"
+    SUSPICIOUS_GAP = "SUSPICIOUS_GAP"
+
+
+class QualitySeverity(str, Enum):
+    """Deterministic severity for a canonical-validation issue (ADR 0003).
+
+    Ordinal order matters: dataset severity is the max seen. An INVALID
+    dataset must not silently enter a backtest.
+    """
+
+    VALID = "VALID"
+    WARNING = "WARNING"
+    INVALID = "INVALID"
+
+    @property
+    def rank(self) -> int:
+        return {"VALID": 0, "WARNING": 1, "INVALID": 2}[self.value]
 
 
 class ReasonCode(str, Enum):
