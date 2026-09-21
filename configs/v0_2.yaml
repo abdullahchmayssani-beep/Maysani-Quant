@@ -1,0 +1,129 @@
+# =============================================================================
+# Maysani Quant V0.2 configuration - provider-independent real-data platform
+#
+# configs/v0_1.yaml is frozen and untouched by this file (CLAUDE.md: V0.1 is
+# the complete, frozen baseline). This file only exists to exercise the new
+# `data.provider: dukascopy` path (ADR 0003, docs/adr/0003-...). Every other
+# section mirrors v0_1.yaml's provisional defaults unchanged - V0.2 changes
+# the data source, not the strategies, risk limits, or cost model.
+#
+# The window below (one trading week) is deliberately small: per the approved
+# V0.2 plan, the complete pipeline must be proven on a small real sample
+# BEFORE any larger historical download is attempted. As of this commit that
+# proof has NOT been completed in this session - this sandbox's egress policy
+# denies datafeed.dukascopy.com (see docs/STATUS.md "Current blocker"). This
+# file is ready to run the moment that access exists.
+# =============================================================================
+version: v0.2.0
+
+experiment:
+  name: v0_2_dukascopy_small_sample
+  hypothesis: >
+    Establish that the V0.2 provider-independent pipeline (FETCH -> RAW STORE
+    -> PARSE -> NORMALIZE -> CANONICAL VALIDATE -> CANONICAL STORE) produces a
+    point-in-time-safe, severity-validated EUR/USD dataset from a real
+    Dukascopy tick sample. No claim is made about the profitability of either
+    baseline or transparent strategy.
+
+instrument:
+  symbol: EURUSD
+  base_currency: EUR
+  quote_currency: USD
+  price_precision: 5        # also the Dukascopy point-value divisor (ADR 0003)
+  size_step: 1.0
+  min_order_size: 1.0       # PROVISIONAL - real minimum is broker-specific
+  contract_multiplier: 1.0
+
+account:
+  currency: USD
+  initial_equity: 50.00     # the canonical organism birth capital
+  death_threshold: 5.00     # PROVISIONAL, as in V0.1
+
+data:
+  provider: dukascopy       # csv (V0.1 default) | dukascopy
+  timeframe: H1
+  available_time_policy: bar_close   # ADR 0003 s.4: a documented policy choice
+  available_time_lag_seconds: 0
+  dukascopy:
+    # One trading week - small enough to be the "prove the pipeline first"
+    # sample the approved plan requires before any larger download.
+    start: "2024-01-08T00:00:00Z"   # Monday 00:00 UTC
+    end: "2024-01-13T00:00:00Z"     # Saturday 00:00 UTC (through Friday close)
+    raw_root: data/raw
+    canonical_root: data/cache/canonical
+    require_bid_ask: true
+
+costs:
+  scenario_name: baseline
+  spread_model: dataset     # V0.2 has real per-bar spread; do not fabricate one
+  fixed_spread_price: 0.00012   # unused while spread_model is 'dataset'
+  slippage_price: 0.00002       # PROVISIONAL. Run the stress scenario too.
+  commission_per_unit: 0.0
+  commission_minimum: 0.0
+  financing_per_unit_per_day_long: 0.0
+  financing_per_unit_per_day_short: 0.0
+
+execution:
+  fill_policy: next_bar_open
+  ambiguous_bar_policy: adverse
+
+risk:
+  config_version: risk-v0.1.0     # unchanged from V0.1 - no risk retuning in V0.2
+  risk_per_trade_pct: 0.01
+  max_leverage: 5.0
+  margin_requirement_pct: 0.20
+  max_margin_utilisation: 0.50
+  max_open_risk_pct: 0.02
+  daily_loss_limit_pct: 0.03
+  max_drawdown_pct: 0.20
+  drawdown_throttle:
+    - [0.05, 1.00]
+    - [0.10, 0.50]
+    - [0.15, 0.25]
+  max_spread_price: 0.0005
+  max_realized_vol: 0.05
+  vol_target: null
+  max_staleness_bars: 2.0
+  min_stop_distance_price: 0.0001
+  max_stop_distance_price: 0.05
+  event_window_blocks_entry: true
+
+features:
+  momentum_lookback: 20
+  ma_fast: 10
+  ma_slow: 50
+  vol_lookback: 20
+  zscore_lookback: 20
+  atr_lookback: 14
+
+# Same permanent controls and same params as V0.1 (CLAUDE.md: a parameter
+# change is a new experiment, not a fix - none are changed here).
+strategies:
+  - id: no_trade_v1
+    hypothesis: Control. Any strategy must beat doing nothing, net of costs.
+  - id: buy_and_hold_v1
+    hypothesis: Control for directional drift in the sample.
+  - id: momentum_v1
+    hypothesis: >
+      A transparent MA-spread trend rule with a volatility filter produces
+      positive net-of-cost edge on unseen EUR/USD data. Not yet tested.
+    params:
+      entry_threshold: 0.002
+      exit_threshold: 0.0005
+      vol_filter_max: 0.02
+      stop_atr_multiple: 2.0
+  - id: mean_reversion_v1
+    hypothesis: >
+      Falsification control. A transparent z-score reversion rule is expected
+      to fail net of costs; if it does not, the sample needs scrutiny.
+    params:
+      entry_z: 1.5
+      exit_z: 0.5
+      vol_filter_max: 0.02
+      stop_atr_multiple: 2.0
+
+journal:
+  path: runs
+
+report:
+  output_dir: runs

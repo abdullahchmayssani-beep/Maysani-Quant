@@ -20,6 +20,8 @@ import struct
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from maysani_quant.backtest.engine import BacktestEngine
 from maysani_quant.data.interfaces import PointInTimeView
 from maysani_quant.data.pipeline.canonical_store import CanonicalStore
@@ -152,6 +154,7 @@ def test_second_run_hits_canonical_cache(tmp_path: Path):
     assert [b.close for b in first.all_bars()] == [b.close for b in second.all_bars()]
 
 
+@pytest.mark.invariant
 def test_adversarial_future_bar_in_canonical_store_is_invisible_at_earlier_as_of(tmp_path: Path):
     """A canonical store legitimately holds the whole historical archive,
     including bars far in the future relative to some earlier decision
@@ -200,6 +203,7 @@ def test_adversarial_future_bar_in_canonical_store_is_invisible_at_earlier_as_of
     assert view.excluded_count == 1
 
 
+@pytest.mark.invariant
 def test_market_data_service_bars_run_through_the_real_engine_like_csv_bars(tmp_path: Path):
     """Cross-provider invariant: the engine, risk, and strategy layers accept
     MarketDataService bars with no provider-specific code path, exactly as

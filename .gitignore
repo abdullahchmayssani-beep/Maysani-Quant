@@ -20,3 +20,9 @@ runs/report_*.txt
 # Market data is licensed; never commit vendor data.
 data/*.csv
 !data/SYNTHETIC_*.csv
+
+# V0.2 (ADR 0003): raw provider artifacts and the canonical cache built from
+# them are local-only. Provenance manifests live alongside them but are
+# equally excluded - regenerate them from the pipeline, never commit them.
+data/raw/
+data/cache/

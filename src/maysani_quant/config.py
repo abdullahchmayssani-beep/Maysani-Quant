@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,17 @@ class StrategySpec:
 
 
 @dataclass
+class DukascopyConfig:
+    """V0.2 (ADR 0003). Only consulted when `data.provider: dukascopy`."""
+
+    start: datetime
+    end: datetime
+    raw_root: str = "data/raw"
+    canonical_root: str = "data/cache/canonical"
+    require_bid_ask: bool = True
+
+
+@dataclass
 class AppConfig:
     version: str
     experiment_name: str
@@ -50,6 +62,8 @@ class AppConfig:
     available_time_policy: str
     available_time_lag_seconds: int
     price_kind: str
+    data_provider: str
+    dukascopy: DukascopyConfig | None
     costs: CostConfig
     risk: RiskConfig
     features: FeatureConfig
@@ -89,6 +103,11 @@ def _require(mapping: Mapping[str, Any], key: str, where: str) -> Any:
     return mapping[key]
 
 
+def _parse_utc(text: str) -> datetime:
+    dt = datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 def load_config(path: str | Path) -> AppConfig:
     path = Path(path)
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -105,6 +124,23 @@ def load_config(path: str | Path) -> AppConfig:
     instrument_raw = _require(raw, "instrument", "root")
     account = _require(raw, "account", "root")
     data = _require(raw, "data", "root")
+
+    data_provider = str(data.get("provider", "csv"))
+    if data_provider not in ("csv", "dukascopy"):
+        raise ValueError(
+            f"unknown data.provider: {data_provider!r} (expected 'csv' or 'dukascopy')"
+        )
+    dukascopy_config: DukascopyConfig | None = None
+    if data_provider == "dukascopy":
+        duka_raw = _require(data, "dukascopy", "data")
+        dukascopy_config = DukascopyConfig(
+            start=_parse_utc(_require(duka_raw, "start", "data.dukascopy")),
+            end=_parse_utc(_require(duka_raw, "end", "data.dukascopy")),
+            raw_root=str(duka_raw.get("raw_root", "data/raw")),
+            canonical_root=str(duka_raw.get("canonical_root", "data/cache/canonical")),
+            require_bid_ask=bool(duka_raw.get("require_bid_ask", True)),
+        )
+
     costs_raw = raw.get("costs", {})
     risk_raw = raw.get("risk", {})
     features_raw = raw.get("features", {})
@@ -141,12 +177,16 @@ def load_config(path: str | Path) -> AppConfig:
         instrument=instrument,
         initial_equity=float(_require(account, "initial_equity", "account")),
         death_threshold=float(_require(account, "death_threshold", "account")),
-        dataset_path=str(_require(data, "path", "data")),
+        dataset_path=str(data.get("path", "")) if data_provider != "csv" else str(
+            _require(data, "path", "data")
+        ),
         timeframe=str(_require(data, "timeframe", "data")),
         timestamp_column=str(data.get("timestamp_column", "timestamp")),
         available_time_policy=str(data.get("available_time_policy", "bar_close")),
         available_time_lag_seconds=int(data.get("available_time_lag_seconds", 0)),
         price_kind=str(data.get("price_kind", "midpoint")),
+        data_provider=data_provider,
+        dukascopy=dukascopy_config,
         costs=CostConfig(
             spread_model=str(costs_raw.get("spread_model", "fixed")),
             fixed_spread_price=float(costs_raw.get("fixed_spread_price", 0.00012)),

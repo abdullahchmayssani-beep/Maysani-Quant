@@ -13,6 +13,7 @@ from maysani_quant.backtest.engine import ENGINE_VERSION, BacktestEngine, Backte
 from maysani_quant.backtest.metrics import MetricsBundle, compute_metrics
 from maysani_quant.config import AppConfig, StrategySpec
 from maysani_quant.data.csv_source import CsvMarketDataSource
+from maysani_quant.data.service import MarketDataService
 from maysani_quant.execution.costs import CostModel
 from maysani_quant.execution.simulator import ExecutionSimulator
 from maysani_quant.experiments.registry import ExperimentRegistry, code_version
@@ -33,7 +34,7 @@ class RunOutput:
 def run_strategy(
     config: AppConfig,
     spec: StrategySpec,
-    source: CsvMarketDataSource,
+    source: CsvMarketDataSource | MarketDataService,
     registry: ExperimentRegistry,
     run_suffix: str = "",
 ) -> RunOutput:
@@ -111,18 +112,42 @@ def run_strategy(
     return RunOutput(result=result, metrics=metrics, experiment_id=experiment.experiment_id)
 
 
-def build_source(config: AppConfig, dataset_override: str | None = None) -> CsvMarketDataSource:
-    path = dataset_override or config.dataset_path
-    return CsvMarketDataSource(
-        path=path,
-        instrument=config.instrument.symbol,
-        timeframe=config.timeframe,
-        timestamp_column=config.timestamp_column,
-        available_time_policy=config.available_time_policy,
-        available_time_lag_seconds=config.available_time_lag_seconds,
-        price_kind=config.price_kind,
-        bar_duration_seconds=config.bar_seconds,
-    )
+def build_source(
+    config: AppConfig, dataset_override: str | None = None
+) -> CsvMarketDataSource | MarketDataService:
+    """The one place a provider is chosen (ADR 0003). Everything downstream
+    of this function only ever sees a `MarketDataSource`-shaped object."""
+    if config.data_provider == "csv":
+        path = dataset_override or config.dataset_path
+        return CsvMarketDataSource(
+            path=path,
+            instrument=config.instrument.symbol,
+            timeframe=config.timeframe,
+            timestamp_column=config.timestamp_column,
+            available_time_policy=config.available_time_policy,
+            available_time_lag_seconds=config.available_time_lag_seconds,
+            price_kind=config.price_kind,
+            bar_duration_seconds=config.bar_seconds,
+        )
+    if config.data_provider == "dukascopy":
+        from maysani_quant.data.providers.dukascopy import DukascopyProvider
+
+        assert config.dukascopy is not None  # enforced by config.py's load_config
+        provider = DukascopyProvider(price_precision=config.instrument.price_precision)
+        return MarketDataService(
+            provider,
+            instrument=config.instrument.symbol,
+            start=config.dukascopy.start,
+            end=config.dukascopy.end,
+            bar_seconds=config.bar_seconds,
+            timeframe=config.timeframe,
+            available_time_policy=config.available_time_policy,
+            available_time_lag_seconds=config.available_time_lag_seconds,
+            raw_root=config.dukascopy.raw_root,
+            canonical_root=config.dukascopy.canonical_root,
+            require_bid_ask=config.dukascopy.require_bid_ask,
+        )
+    raise ValueError(f"unknown data.provider: {config.data_provider}")  # pragma: no cover
 
 
 def engine_version() -> str:
