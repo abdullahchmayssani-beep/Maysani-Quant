@@ -143,3 +143,34 @@ when `data.provider == "dukascopy"`.
   remains exactly as unresolved as before this ADR - acquisition mechanics
   and licensing are independent questions, and this ADR only addresses the
   former.
+
+## Amendments from the V0.2 pre-freeze audit (2026-09-21)
+
+The independent audit before the V0.2 freeze found four defects in the
+mechanics this ADR describes. All are fixed and pinned by
+`tests/unit/test_audit_regressions.py`:
+
+1. **`pipeline_version` was recorded but not part of the identity.** ADR 0003
+   s.7 listed the identity inputs; `pipeline_version` was written into the
+   manifest and omitted from the hash, so a future NORMALIZE change would
+   have let stale cache entries be served under an identity whose pipeline
+   had moved on, and two materially different datasets would have collided
+   on one hash. It is now an identity input. (This changed every existing
+   canonical identity, which is correct and cost nothing - the only affected
+   entry was a local, gitignored, regenerable cache.)
+2. **The request index was keyed without `label`.** For an ADR 0004 window
+   that yields both a `bid` and an `ask` artifact, the second `put` silently
+   overwrote the first's pointer, so the window resolved to one side only.
+   Latent (the CSV-export provider is not cache-aware) but a live landmine
+   for any future multi-artifact cache-aware provider. The label is now part
+   of the key; an empty label keys exactly as before.
+3. **The raw manifest was only written on the branch that wrote the blob.** A
+   blob whose sidecar went missing stayed permanently un-provenanced and
+   permanently un-cacheable (every subsequent run re-fetched it). The sidecar
+   is now written whenever it is absent, and never overwritten.
+4. **Writes were not atomic.** An interrupted `write_bytes` left a truncated
+   file under a name asserting the full content's hash, which `put` then
+   correctly refused to overwrite - poisoning the cache until a human deleted
+   it. All raw/canonical writes now go through `atomic_write_bytes`
+   (temp file + `os.replace`), so a reader sees either the old file or the
+   complete new one.

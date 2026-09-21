@@ -128,6 +128,7 @@ class MarketDataService:
             requested_end=self.end,
             schema_version=SCHEMA_VERSION,
             normalization_policy=self._policy,
+            pipeline_version=PIPELINE_VERSION,
         )
 
         if self._canonical_store.exists(self.provider.provider_name, self.instrument, identity_hash):
@@ -172,7 +173,9 @@ class MarketDataService:
             actual_end=bars[-1].end_time if bars else None,
             validation_summary={"severity": validation.severity.value, **validation.counts()},
         )
-        self._canonical_store.write(manifest, bars)
+        # write() stamps the bars checksum into the manifest it persists; keep
+        # the stamped copy so this instance's manifest matches what is on disk.
+        manifest = self._canonical_store.write(manifest, bars)
         return bars, manifest
 
     # -- MarketDataSource-compatible surface -------------------------------

@@ -15,6 +15,7 @@ documented `.bi5` shape - no network call is made. Covers:
 """
 from __future__ import annotations
 
+import inspect
 import lzma
 import struct
 from datetime import UTC, datetime, timedelta
@@ -114,8 +115,17 @@ def test_reproducible_identity_ignores_retrieval_time_not_inputs(tmp_path: Path)
     svc_a = _two_hour_service(tmp_path / "run_a")
     svc_b = _two_hour_service(tmp_path / "run_b")  # separate raw/canonical dirs, re-fetched
     assert svc_a.data_hash == svc_b.data_hash, "same bytes+policy must reproduce the same identity"
-    assert svc_a.manifest.retrieved_at != svc_b.manifest.retrieved_at or True  # timestamps vary
     assert svc_a.manifest.canonical_identity_hash == svc_b.manifest.canonical_identity_hash
+
+    # Structural guard: no wall-clock input may ever feed the identity. (The
+    # previous assertion here was `... or True`, which could not fail.)
+    identity_params = set(inspect.signature(canonical_identity_hash).parameters)
+    assert "retrieved_at" not in identity_params
+    assert identity_params == {
+        "raw_artifact_hashes", "provider", "provider_version", "instrument",
+        "requested_start", "requested_end", "schema_version",
+        "normalization_policy", "pipeline_version",
+    }
 
     # Changing the schema/policy version must change the identity.
     different_policy = NormalizationPolicy(
@@ -133,8 +143,25 @@ def test_reproducible_identity_ignores_retrieval_time_not_inputs(tmp_path: Path)
         requested_end=svc_a.manifest.requested_end,
         schema_version=SCHEMA_VERSION,
         normalization_policy=different_policy,
+        pipeline_version=PIPELINE_VERSION,
     )
     assert other_hash != svc_a.data_hash
+
+    # And a pipeline change alone must change the identity: identical raw
+    # bytes run through different NORMALIZE/VALIDATE code are not the same
+    # dataset, and must never collide on one cache entry.
+    same_inputs_new_pipeline = canonical_identity_hash(
+        raw_artifact_hashes=list(svc_a.manifest.raw_artifact_hashes),
+        provider=svc_a.manifest.provider,
+        provider_version=svc_a.manifest.provider_version,
+        instrument=svc_a.manifest.instrument,
+        requested_start=svc_a.manifest.requested_start,
+        requested_end=svc_a.manifest.requested_end,
+        schema_version=SCHEMA_VERSION,
+        normalization_policy=svc_a.manifest.normalization_policy,
+        pipeline_version=PIPELINE_VERSION + "-next",
+    )
+    assert same_inputs_new_pipeline != svc_a.data_hash
 
 
 def test_second_run_hits_canonical_cache(tmp_path: Path):

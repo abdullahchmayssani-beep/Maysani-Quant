@@ -242,10 +242,25 @@ class DukascopyProvider:
                     f"not a multiple of the {_RECORD_SIZE}-byte record size"
                 )
             hour_start = artifact.requested_start
+            window_ms = int(
+                (artifact.requested_end - artifact.requested_start).total_seconds() * 1000
+            )
             for offset in range(0, len(raw), _RECORD_SIZE):
                 ms, ask_raw, bid_raw, ask_volume, bid_volume = _RECORD_STRUCT.unpack_from(
                     raw, offset
                 )
+                if ms >= window_ms:
+                    # The artifact is, by construction of its URL, one hour of
+                    # ticks. An offset outside that hour means the bytes are
+                    # not what this adapter's [UNVERIFIED] layout assumes
+                    # (wrong field order, wrong endianness, wrong record size)
+                    # - refuse rather than emit a tick at a fabricated time
+                    # that would silently land in some unrelated bar.
+                    raise ArtifactParseError(
+                        f"artifact {artifact.source_uri} record {offset // _RECORD_SIZE} has "
+                        f"time offset {ms}ms, outside its declared {window_ms}ms window - "
+                        "the record layout does not match this adapter's assumptions"
+                    )
                 yield ProviderTick(
                     instrument=artifact.instrument,
                     timestamp=hour_start + timedelta(milliseconds=ms),

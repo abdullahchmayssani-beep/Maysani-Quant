@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -170,6 +171,17 @@ def cmd_acquire_dukascopy(args: argparse.Namespace) -> int:
     unavailable/failed hour is reported explicitly, not silently skipped."""
     from maysani_quant.data.providers.dukascopy import DukascopyProvider
     from maysani_quant.data.service import MarketDataService
+
+    # The instrument becomes both a URL path segment and a cache directory
+    # name, so reject anything that is not a plain symbol (a stray "/" in
+    # e.g. "EUR/USD" would silently write outside the intended cache tree).
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,32}", args.instrument):
+        print(
+            f"--instrument {args.instrument!r} is not a plain symbol "
+            "(letters, digits, underscore; e.g. EURUSD)",
+            file=sys.stderr,
+        )
+        return 2
 
     start = parse_utc(args.start)
     end = parse_utc(args.end)

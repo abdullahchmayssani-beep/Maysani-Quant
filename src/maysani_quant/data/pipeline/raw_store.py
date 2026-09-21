@@ -20,7 +20,12 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from maysani_quant.data.provenance import RawManifest, sha256_bytes
+from maysani_quant.data.provenance import (
+    RawManifest,
+    atomic_write_bytes,
+    atomic_write_text,
+    sha256_bytes,
+)
 from maysani_quant.data.providers.base import RawArtifact
 
 
@@ -40,22 +45,46 @@ class RawArtifactStore:
         return directory / f"{digest}.bin", directory / f"{digest}.manifest.json"
 
     def _request_index_path(
-        self, provider: str, instrument: str, requested_start: datetime, requested_end: datetime
+        self,
+        provider: str,
+        instrument: str,
+        requested_start: datetime,
+        requested_end: datetime,
+        label: str = "",
     ) -> Path:
+        """One index entry per (window, label).
+
+        `label` is part of the key because a single requested window can
+        legitimately produce more than one artifact - ADR 0004's CSV export
+        yields a `bid` and an `ask` file for the same window. Without the
+        label the second `put` would overwrite the first's pointer and the
+        window would resolve to only one of the two artifacts. An empty
+        label (the `.bi5` case, one artifact per window) keys exactly as
+        before, so existing cache entries stay valid.
+        """
         key = (
             f"{requested_start.astimezone(UTC):%Y%m%dT%H%M%SZ}_"
             f"{requested_end.astimezone(UTC):%Y%m%dT%H%M%SZ}"
         )
+        if label:
+            key = f"{key}__{label}"
         return self.root / provider / instrument / "_requests" / f"{key}.json"
 
     def find_by_request(
-        self, provider: str, instrument: str, requested_start: datetime, requested_end: datetime
+        self,
+        provider: str,
+        instrument: str,
+        requested_start: datetime,
+        requested_end: datetime,
+        label: str = "",
     ) -> RawManifest | None:
         """The cache-hit lookup: is there already a verified artifact on disk
         for this exact request? Self-healing - any inconsistency (missing
         index, missing blob, checksum mismatch, corrupt index JSON) is
         treated as a cache miss, never as an error."""
-        index_path = self._request_index_path(provider, instrument, requested_start, requested_end)
+        index_path = self._request_index_path(
+            provider, instrument, requested_start, requested_end, label
+        )
         try:
             digest = json.loads(index_path.read_text(encoding="utf-8"))["sha256"]
             self.get_bytes(provider, instrument, digest)  # re-verifies checksum
@@ -83,21 +112,32 @@ class RawArtifactStore:
             if sha256_bytes(existing) != digest:
                 raise OSError(
                     f"content-addressed collision at {blob_path}: on-disk bytes do not "
-                    "match their own filename hash. Refusing to overwrite."
+                    "match their own filename hash. Refusing to overwrite. Delete that "
+                    "file to let it be re-fetched."
                 )
         else:
-            blob_path.parent.mkdir(parents=True, exist_ok=True)
-            blob_path.write_bytes(artifact.content)
-            manifest_path.write_text(json.dumps(manifest.to_dict(), indent=2), encoding="utf-8")
+            atomic_write_bytes(blob_path, artifact.content)
+
+        # Write the manifest whenever it is absent, not only on the path that
+        # wrote the blob: a stored blob whose sidecar went missing would
+        # otherwise stay permanently un-provenanced AND permanently
+        # un-cacheable (find_by_request needs the manifest and would keep
+        # missing). The existing sidecar is never overwritten - it records the
+        # retrieval that first produced these bytes.
+        if not manifest_path.exists():
+            atomic_write_text(manifest_path, json.dumps(manifest.to_dict(), indent=2))
 
         # Always (re)point this exact request at the (possibly pre-existing)
         # blob, so a future identical request is a cache hit even if this
         # call's bytes happened to already be stored under a prior request.
         index_path = self._request_index_path(
-            artifact.provider, artifact.instrument, artifact.requested_start, artifact.requested_end
+            artifact.provider,
+            artifact.instrument,
+            artifact.requested_start,
+            artifact.requested_end,
+            artifact.label,
         )
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(json.dumps({"sha256": digest}), encoding="utf-8")
+        atomic_write_text(index_path, json.dumps({"sha256": digest}))
         return manifest
 
     def get_bytes(self, provider: str, instrument: str, digest: str) -> bytes:

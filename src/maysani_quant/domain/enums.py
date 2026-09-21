@@ -58,6 +58,7 @@ class QualityFlag(str, Enum):
     # V0.2 additions (ADR 0003) - canonical-validation-only flags. Never
     # produced by data/validation.py's V0.1 validate_bars.
     NON_FINITE = "NON_FINITE"
+    NON_POSITIVE_PRICE = "NON_POSITIVE_PRICE"
     TIMEZONE_NAIVE = "TIMEZONE_NAIVE"
     WEEKEND_GAP = "WEEKEND_GAP"
     SUSPICIOUS_GAP = "SUSPICIOUS_GAP"

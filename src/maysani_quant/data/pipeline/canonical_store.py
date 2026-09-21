@@ -8,14 +8,28 @@ CSV alongside it is a plain, inspectable rendering of the bars themselves.
 from __future__ import annotations
 
 import csv
+import io
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from maysani_quant.data.provenance import CanonicalManifest, NormalizationPolicy
+from maysani_quant.data.provenance import (
+    CanonicalManifest,
+    NormalizationPolicy,
+    atomic_write_bytes,
+    atomic_write_text,
+    sha256_bytes,
+)
 from maysani_quant.domain.enums import QualityFlag
 from maysani_quant.domain.models import MarketBar
+
+
+class CanonicalIntegrityError(OSError):
+    """The cached bars file no longer matches the checksum its manifest
+    recorded. Never repaired and never silently served - an experiment that
+    cites this dataset identity would otherwise be citing different bars."""
 
 _COLUMNS = [
     "start_time", "end_time", "available_time", "open", "high", "low", "close",
@@ -35,30 +49,38 @@ class CanonicalStore:
         bars_path, manifest_path = self.paths_for(provider, instrument, identity_hash)
         return bars_path.exists() and manifest_path.exists()
 
-    def write(self, manifest: CanonicalManifest, bars: Sequence[MarketBar]) -> None:
+    def write(self, manifest: CanonicalManifest, bars: Sequence[MarketBar]) -> CanonicalManifest:
+        """Writes the bars first, then the manifest that checksums them.
+
+        Order matters: `exists()` requires both, so an interrupted write
+        leaves an incomplete entry that is simply recomputed next time rather
+        than served."""
         bars_path, manifest_path = self.paths_for(
             manifest.provider, manifest.instrument, manifest.canonical_identity_hash
         )
-        bars_path.parent.mkdir(parents=True, exist_ok=True)
-        with bars_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(_COLUMNS)
-            for bar in bars:
-                writer.writerow(
-                    [
-                        bar.start_time.isoformat(),
-                        bar.end_time.isoformat(),
-                        bar.available_time.isoformat(),
-                        bar.open, bar.high, bar.low, bar.close,
-                        "" if bar.volume is None else bar.volume,
-                        "" if bar.bid_close is None else bar.bid_close,
-                        "" if bar.ask_close is None else bar.ask_close,
-                        "" if bar.spread is None else bar.spread,
-                        bar.source,
-                        ";".join(f.value for f in bar.quality_flags),
-                    ]
-                )
-        manifest_path.write_text(json.dumps(manifest.to_dict(), indent=2), encoding="utf-8")
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerow(_COLUMNS)
+        for bar in bars:
+            writer.writerow(
+                [
+                    bar.start_time.isoformat(),
+                    bar.end_time.isoformat(),
+                    bar.available_time.isoformat(),
+                    bar.open, bar.high, bar.low, bar.close,
+                    "" if bar.volume is None else bar.volume,
+                    "" if bar.bid_close is None else bar.bid_close,
+                    "" if bar.ask_close is None else bar.ask_close,
+                    "" if bar.spread is None else bar.spread,
+                    bar.source,
+                    ";".join(f.value for f in bar.quality_flags),
+                ]
+            )
+        payload = buffer.getvalue().encode("utf-8")
+        stamped = replace(manifest, bars_sha256=sha256_bytes(payload))
+        atomic_write_bytes(bars_path, payload)
+        atomic_write_text(manifest_path, json.dumps(stamped.to_dict(), indent=2))
+        return stamped
 
     def read_manifest(self, provider: str, instrument: str, identity_hash: str) -> CanonicalManifest:
         _, manifest_path = self.paths_for(provider, instrument, identity_hash)
@@ -80,12 +102,21 @@ class CanonicalStore:
             actual_start=datetime.fromisoformat(data["actual_start"]) if data["actual_start"] else None,
             actual_end=datetime.fromisoformat(data["actual_end"]) if data["actual_end"] else None,
             validation_summary=data["validation_summary"],
+            bars_sha256=data.get("bars_sha256", ""),
         )
 
     def read_bars(self, provider: str, instrument: str, identity_hash: str) -> list[MarketBar]:
         bars_path, _ = self.paths_for(provider, instrument, identity_hash)
+        payload = bars_path.read_bytes()
+        expected = self.read_manifest(provider, instrument, identity_hash).bars_sha256
+        if expected and sha256_bytes(payload) != expected:
+            raise CanonicalIntegrityError(
+                f"cached bars at {bars_path} do not match the bars_sha256 their manifest "
+                f"records ({expected[:12]}...). Refusing to serve them under an identity "
+                "that no longer describes them; delete the entry to rebuild it."
+            )
         bars: list[MarketBar] = []
-        with bars_path.open(newline="", encoding="utf-8") as handle:
+        with io.StringIO(payload.decode("utf-8"), newline="") as handle:
             for row in csv.DictReader(handle):
                 flags = tuple(
                     QualityFlag(f) for f in row["quality_flags"].split(";") if f

@@ -14,8 +14,11 @@ Two manifests, two different reproducibility contracts:
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from maysani_quant.domain.models import stable_hash
 
@@ -24,6 +27,35 @@ SCHEMA_VERSION = "canonical-v1"
 
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write via a temp file in the same directory, then `os.replace`.
+
+    A plain `write_bytes` that is interrupted leaves a truncated file behind.
+    For the content-addressed raw cache that is especially bad: the truncated
+    file still carries a filename asserting the full content's hash, which
+    `RawArtifactStore.put` then (correctly) refuses to overwrite - poisoning
+    the cache until a human deletes it. `os.replace` is atomic on POSIX and
+    Windows, so a reader sees either the old file or the complete new one.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+    )
+    try:
+        with handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(handle.name, path)
+    except BaseException:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    atomic_write_bytes(path, text.encode("utf-8"))
 
 
 @dataclass(frozen=True)
@@ -111,6 +143,11 @@ class CanonicalManifest:
     actual_start: datetime | None = None
     actual_end: datetime | None = None
     validation_summary: dict = field(default_factory=dict)
+    # SHA-256 of the canonical bars file this manifest describes. The identity
+    # hash covers the pipeline's *inputs*; this covers its *output*, so a cache
+    # entry that drifts (hand-edited, truncated, partially written) cannot be
+    # served under an identity that no longer describes it.
+    bars_sha256: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -129,6 +166,7 @@ class CanonicalManifest:
             "actual_start": self.actual_start.isoformat() if self.actual_start else None,
             "actual_end": self.actual_end.isoformat() if self.actual_end else None,
             "validation_summary": self.validation_summary,
+            "bars_sha256": self.bars_sha256,
         }
 
 
@@ -142,8 +180,17 @@ def canonical_identity_hash(
     requested_end: datetime,
     schema_version: str,
     normalization_policy: NormalizationPolicy,
+    pipeline_version: str,
 ) -> str:
-    """Deterministic identity. Retrieval time is deliberately excluded."""
+    """Deterministic identity over every input that can change the bars.
+
+    Retrieval time is deliberately excluded (ADR 0003 s.7) - re-fetching the
+    same bytes is the same dataset. `pipeline_version` IS included: a change
+    to the NORMALIZE/VALIDATE code produces different bars from identical raw
+    bytes, and two different datasets must never share one identity (nor may
+    a stale cache entry be served under an identity whose pipeline moved on).
+    This function takes no wall-clock argument by design; do not add one.
+    """
     payload = {
         "raw_artifact_hashes": sorted(raw_artifact_hashes),
         "provider": provider,
@@ -153,5 +200,6 @@ def canonical_identity_hash(
         "requested_end": requested_end.isoformat(),
         "schema_version": schema_version,
         "normalization_policy": normalization_policy.to_dict(),
+        "pipeline_version": pipeline_version,
     }
     return stable_hash(payload)

@@ -78,7 +78,18 @@ class AppConfig:
 
     @property
     def bar_seconds(self) -> int:
-        return BAR_SECONDS.get(self.timeframe, 86400)
+        """Raises on an unrecognised timeframe rather than defaulting.
+
+        This value drives bar-duration inference, engine staleness and V0.2
+        tick aggregation, so a typo here silently changed the meaning of a
+        run. Failing loudly matches this module's rule for unknown keys."""
+        try:
+            return BAR_SECONDS[self.timeframe]
+        except KeyError:
+            raise ValueError(
+                f"unknown data.timeframe {self.timeframe!r}; expected one of "
+                f"{sorted(BAR_SECONDS)}"
+            ) from None
 
     @property
     def config_hash(self) -> str:

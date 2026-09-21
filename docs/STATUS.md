@@ -288,6 +288,63 @@ Defaults write to `data/raw/` and `data/cache/canonical/` (gitignored); pass
 line at each step before moving to the next window. Confirming this closes
 the one remaining `[UNVERIFIED]` item in `data/providers/dukascopy.py`.
 
+## V0.2 pre-freeze audit (this session)
+
+An independent adversarial review of the V0.2/V0.2.1 data architecture, run
+before freezing it and deliberately not trusting the passing test suite.
+Eight defects were found in code whose tests were all green; each is fixed
+and pinned by `tests/unit/test_audit_regressions.py` (12 tests, every one
+verified to fail against the pre-fix code).
+
+- **Point-in-time integrity: no defect found.** Bars are bucketed so that
+  every tick satisfies `start <= tick < end` and `available_time` is the
+  bucket end, so a bar can never carry data from after its own availability.
+  The engine builds each `PointInTimeView` from bars it has already
+  iterated, so neither the full `all_bars()` list nor the canonical cache
+  can leak a future bar. Out-of-order bars are INVALID and blocked.
+- **HIGH - `pipeline_version` was not part of the canonical identity** (only
+  recorded in the manifest). A NORMALIZE change would have let stale cache
+  entries be served under an identity whose pipeline had moved on. Fixed;
+  identities changed as a result (local regenerable cache only).
+- **HIGH - the canonical bars file had no integrity check.** An edited or
+  truncated cache file was served silently, so an experiment record could
+  cite a `data_hash` that no longer described the bars actually backtested.
+  Manifests now carry `bars_sha256` and `read_bars` refuses on mismatch.
+- **HIGH - the `.bi5` parser accepted tick offsets outside the artifact's
+  own hour.** A `uint32` offset of ~46 days placed a bar at a fabricated
+  time that produced at most a WARNING-level gap. Now a hard
+  `ArtifactParseError` - and the single best early warning that the
+  `[UNVERIFIED]` byte layout is wrong, which is exactly what the first real
+  `.bi5` fetch must rule out.
+- **MEDIUM - non-positive prices passed validation as VALID.** A uniformly
+  negative bar is finite, OHLC-consistent and has a positive spread, so
+  nothing caught it. New `NON_POSITIVE_PRICE` flag (INVALID).
+- **MEDIUM - weekend-gap false negative.** Classification looked only at
+  where a gap *started*, so a ~3-day mid-week hole beginning on a Sunday
+  evening was reported VALID and vanished from the summary. A gap must now
+  also *end* at the reopen.
+- **MEDIUM - the raw request index was keyed without `label`**, so a window
+  yielding both a `bid` and an `ask` artifact resolved to one side only
+  (latent; the CSV-export provider is not cache-aware).
+- **MEDIUM - a raw blob whose manifest went missing** stayed permanently
+  un-provenanced and permanently un-cacheable. **MEDIUM - writes were not
+  atomic**, so an interrupted run poisoned the content-addressed cache until
+  a human deleted the file. Both fixed.
+- **MEDIUM - an unrecognised `data.timeframe` silently meant daily**
+  (`BAR_SECONDS.get(..., 86400)`), reinterpreting a whole run. It now raises,
+  matching this repo's rule for unknown config keys. `configs/v0_1.yaml` uses
+  `D1` and is unaffected.
+- **LOW - one test assertion was tautological** (`... or True`, which cannot
+  fail). Replaced with a structural guard that no wall-clock value can ever
+  enter the identity hash.
+- **LOW - `--instrument` was interpolated into cache paths and a URL
+  unvalidated** (a stray `/`, e.g. `EUR/USD`, would write outside the cache
+  tree). Now rejected unless it is a plain symbol.
+
+Verified unchanged by the audit: V0.1 isolation (`configs/v0_1.yaml`
+byte-identical, same `data_hash`), no secrets, no market data tracked in git,
+and the real CSV-export sample still produces 60 M1 bars, VALID.
+
 ## Current blocker
 
 **Network access to `datafeed.dukascopy.com` from this sandbox.** The

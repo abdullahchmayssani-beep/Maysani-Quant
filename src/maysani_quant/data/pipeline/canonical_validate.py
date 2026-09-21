@@ -27,25 +27,43 @@ _SEVERITY = {
     QualityFlag.INCONSISTENT_OHLC: QualitySeverity.INVALID,
     QualityFlag.NEGATIVE_SPREAD: QualitySeverity.INVALID,
     QualityFlag.NON_FINITE: QualitySeverity.INVALID,
+    QualityFlag.NON_POSITIVE_PRICE: QualitySeverity.INVALID,
     QualityFlag.TIMEZONE_NAIVE: QualitySeverity.INVALID,
 }
 
 # Fixed heuristic, not a trading calendar - see ADR 0003 s.6.
 _WEEKEND_CAP = timedelta(days=3)
+_WEEKEND_CLOSE_HOUR_UTC = 21
+# A weekend gap must end at the reopen, not merely begin at the close. The
+# tolerance absorbs the hour of DST drift in the real (New York anchored)
+# session boundary plus a thin first-tick lag; anything later is a data hole
+# that happens to start on a weekend, not a weekend.
+_WEEKEND_REOPEN_TOLERANCE = timedelta(hours=6)
 
 
 def _in_weekend_closure(dt: datetime) -> bool:
     """Fri 21:00 UTC through Sun 21:00 UTC, the common interbank FX
-    convention. No holiday calendar, no broker session table (documented
-    limitation, ADR 0003 s.6)."""
+    convention. No holiday calendar, no broker session table, and no DST
+    handling - the real boundary is 17:00 New York, which is 21:00 UTC only
+    in EDT and 22:00 UTC in EST (documented limitation, ADR 0003 s.6)."""
     weekday, hour = dt.weekday(), dt.hour  # Mon=0 ... Sun=6
-    if weekday == 4 and hour >= 21:
+    if weekday == 4 and hour >= _WEEKEND_CLOSE_HOUR_UTC:
         return True
     if weekday == 5:
         return True
-    if weekday == 6 and hour < 21:
+    if weekday == 6 and hour < _WEEKEND_CLOSE_HOUR_UTC:
         return True
     return False
+
+
+def _weekend_reopen_after(dt: datetime) -> datetime:
+    """The first Sunday 21:00 UTC at or after `dt` - when the closure that
+    contains `dt` is expected to end."""
+    days_ahead = (6 - dt.weekday()) % 7
+    reopen = (dt + timedelta(days=days_ahead)).replace(
+        hour=_WEEKEND_CLOSE_HOUR_UTC, minute=0, second=0, microsecond=0
+    )
+    return reopen if reopen >= dt else reopen + timedelta(days=7)
 
 
 @dataclass(frozen=True)
@@ -122,6 +140,19 @@ def validate_canonical_bars(
         if require_bid_ask and (bar.bid_close is None or bar.ask_close is None or bar.spread is None):
             add(bar.end_time, QualityFlag.NON_FINITE, "bid/ask fidelity required but missing")
 
+        # A spot FX price is never zero or negative. Nothing else in this
+        # function catches it: a uniformly negative bar is finite, internally
+        # OHLC-consistent and has a positive ask-bid spread, so without this
+        # check a misparsed artifact could pass as VALID.
+        prices = [bar.open, bar.high, bar.low, bar.close]
+        prices += [p for p in (bar.bid_close, bar.ask_close) if p is not None]
+        if any(p <= 0 for p in prices if math.isfinite(p)):
+            add(
+                bar.end_time,
+                QualityFlag.NON_POSITIVE_PRICE,
+                f"non-positive price in {prices}",
+            )
+
         hi = max(bar.open, bar.close)
         lo = min(bar.open, bar.close)
         if bar.high < hi or bar.low > lo or bar.high < bar.low:
@@ -153,9 +184,15 @@ def validate_canonical_bars(
             elif bar.start_time > prev.end_time:
                 gap_seconds = (bar.start_time - prev.end_time).total_seconds()
                 if gap_seconds >= expected_bar_seconds:
+                    # A weekend gap must both START inside the closure and END
+                    # at the reopen. Checking only the start let a multi-day
+                    # mid-week hole that happened to begin on a Sunday pass as
+                    # VALID and disappear from the report.
                     if (
                         _in_weekend_closure(prev.end_time)
                         and (bar.start_time - prev.end_time) <= _WEEKEND_CAP
+                        and bar.start_time
+                        <= _weekend_reopen_after(prev.end_time) + _WEEKEND_REOPEN_TOLERANCE
                     ):
                         add(
                             bar.end_time,
