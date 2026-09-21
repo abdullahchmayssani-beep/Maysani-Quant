@@ -160,7 +160,7 @@ class MarketDataService:
             pipeline_version=PIPELINE_VERSION,
             retrieved_at=now_utc(),
             bar_count=len(bars),
-            actual_start=bars[0].end_time if bars else None,
+            actual_start=bars[0].start_time if bars else None,
             actual_end=bars[-1].end_time if bars else None,
             validation_summary={"severity": validation.severity.value, **validation.counts()},
         )

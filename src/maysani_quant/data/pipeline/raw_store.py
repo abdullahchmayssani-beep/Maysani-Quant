@@ -42,6 +42,7 @@ class RawArtifactStore:
             retrieved_at=artifact.retrieved_at,
             source_uri=artifact.source_uri,
             byte_length=len(artifact.content),
+            label=artifact.label,
         )
         if blob_path.exists():
             existing = blob_path.read_bytes()

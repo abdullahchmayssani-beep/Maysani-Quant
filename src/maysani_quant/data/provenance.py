@@ -39,6 +39,7 @@ class RawManifest:
     retrieved_at: datetime
     source_uri: str
     byte_length: int
+    label: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +52,7 @@ class RawManifest:
             "retrieved_at": self.retrieved_at.isoformat(),
             "source_uri": self.source_uri,
             "byte_length": self.byte_length,
+            "label": self.label,
         }
 
     @staticmethod
@@ -65,6 +67,7 @@ class RawManifest:
             retrieved_at=datetime.fromisoformat(data["retrieved_at"]),
             source_uri=data["source_uri"],
             byte_length=int(data["byte_length"]),
+            label=data.get("label", ""),
         )
 
 

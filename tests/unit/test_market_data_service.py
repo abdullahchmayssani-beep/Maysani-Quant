@@ -103,6 +103,11 @@ def test_pipeline_produces_bid_ask_bars(tmp_path: Path):
     assert all(b.spread is not None and b.spread >= 0 for b in bars)
     assert service.validation.ok
     assert service.is_synthetic is False
+    # Regression: actual_start/actual_end must bound the real bar coverage
+    # (start_time of the first bar, end_time of the last), not both be
+    # end_times - a bug found during the first real-data validation.
+    assert service.manifest.actual_start == bars[0].start_time
+    assert service.manifest.actual_end == bars[-1].end_time
 
 
 def test_reproducible_identity_ignores_retrieval_time_not_inputs(tmp_path: Path):
