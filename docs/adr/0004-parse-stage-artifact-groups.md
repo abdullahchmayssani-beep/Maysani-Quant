@@ -84,3 +84,18 @@ would matter for any future tick-level use.
 - The real uploaded CSVs are never committed to git (see `.gitignore`'s
   existing `data/raw/` / `data/cache/` rules); only hand-built, clearly-fake
   fixture text exercises this adapter in the committed test suite.
+
+### Scope of `DukascopyCsvExportProvider`: a validation fixture/input path, not the acquisition mechanism
+
+`DukascopyCsvExportProvider` exists to let the pipeline be proven against
+real Dukascopy bytes despite this sandbox's egress policy blocking the
+`.bi5` network fetch (see `docs/STATUS.md`). It requires a human to visit
+Dukascopy's website, choose a window, and download two files by hand - there
+is no automated, unattended way to acquire data through it at any real
+scale (a multi-year backtest dataset one hour at a time, by hand, is not a
+viable acquisition mechanism). It is retained as a permanent, tested
+ingestion path (useful for spot-checking, small manual samples, or a future
+session with different network access) but the **long-term, automated
+historical data acquisition mechanism is still `DukascopyProvider`'s `.bi5`
+network fetch**, which remains unverified against real bytes and is the
+actual current blocker - not a design or code gap this ADR leaves open.

@@ -10,9 +10,11 @@ byte-for-byte unchanged; CSV/synthetic path re-verified end-to-end after
 every V0.2 change).
 
 **V0.2 — provider-independent market data pipeline implemented and validated
-against a real (manually-supplied) Dukascopy sample.** The `.bi5` network
-path is still untested against real bytes (egress blocked). See
-`docs/adr/0003-provider-independent-market-data.md` and
+against real Dukascopy EUR/USD data.** The real-data sample came in through
+a manual CSV-export validation fixture/input path (ADR 0004), not through
+automated acquisition - the automated `.bi5` network fetch remains untested
+against real bytes and is the current blocker (egress denied in this
+sandbox). See `docs/adr/0003-provider-independent-market-data.md` and
 `docs/adr/0004-parse-stage-artifact-groups.md` for the design, and "V0.2
 status" below for exactly what is and isn't proven.
 
@@ -73,9 +75,11 @@ for awareness, not treated as a defect.
 
 ## V0.2 status (this session)
 
-**Architecture implemented and offline-tested; not yet run against real
-Dukascopy data.** See `docs/adr/0003-provider-independent-market-data.md` for
-the full design. Summary:
+**Architecture implemented, offline-tested, and validated against real
+Dukascopy EUR/USD data via a manual CSV-export validation fixture (ADR
+0004) - automated `.bi5` network acquisition is still untested and remains
+the current blocker.** See `docs/adr/0003-provider-independent-market-data.md`
+for the full design. Summary:
 
 - New pipeline: `data/providers/` (provider contract + Dukascopy bi5
   adapter), `data/pipeline/` (raw_store, raw_validate, normalize,
@@ -90,25 +94,31 @@ the full design. Summary:
 - 114 tests pass (was 88; +25 new tests, +1 net from splitting one
   regression test - see "Test suite change" below), `pytest -m invariant`
   47 pass (was 45), `ruff check .` clean.
-- **Real-data validation: done, via a different ingestion path than
-  originally planned.** `datafeed.dukascopy.com:443` (the `.bi5` network
-  fetch) is still denied by this sandbox's egress policy (403 on CONNECT,
-  confirmed via the proxy's status endpoint). The user instead supplied a
-  real Dukascopy **website CSV export** (EUR/USD BID+ASK, 2026-09-17
-  12:00-13:00 UTC, 5293 rows/side) as a manually-provided sample. ADR 0004
-  adds `data/providers/dukascopy_csv_export.py` for this ingestion path
-  (FETCH reads local files instead of the network; everything downstream -
-  RAW STORE, PARSE, NORMALIZE, CANONICAL VALIDATE, CANONICAL STORE - is
-  unchanged). This sample has been run through the full pipeline end to end
-  and validated (see "Real-data validation results" below); the raw CSVs
-  and everything derived from them live only in the gitignored `data/raw/`
-  and `data/cache/` and were never committed.
-- **Still not done:** any fetch over `.bi5`/the network path itself. That
-  half of ADR 0003's original scope remains blocked by the same egress
+- **Real-data validation: done, via a manual validation fixture/input path,
+  not via automated acquisition.** `datafeed.dukascopy.com:443` (the `.bi5`
+  network fetch - the intended automated acquisition mechanism) is still
+  denied by this sandbox's egress policy (403 on CONNECT, confirmed via the
+  proxy's status endpoint) and **cannot be tested in this sandbox** because
+  of that egress restriction. The user instead supplied a real Dukascopy
+  **website CSV export** (EUR/USD BID+ASK, 2026-09-17 12:00-13:00 UTC, 5293
+  rows/side) as a manually-downloaded validation sample. ADR 0004 adds
+  `data/providers/dukascopy_csv_export.py` for this purpose (FETCH reads
+  local files instead of the network; everything downstream - RAW STORE,
+  PARSE, NORMALIZE, CANONICAL VALIDATE, CANONICAL STORE - is unchanged).
+  **This adapter is a validation fixture/input path, not the long-term
+  acquisition mechanism** - it requires a human to download every window by
+  hand and does not scale to a real backtest dataset (see ADR 0004's
+  "Scope" section). The sample has been run through the full pipeline end
+  to end and validated (see "Real-data validation results" below); the raw
+  CSVs and everything derived from them live only in the gitignored
+  `data/raw/` and `data/cache/` and were never committed.
+- **Current blocker: automatic (`.bi5`) data acquisition.** That half of
+  ADR 0003's original scope remains blocked by this sandbox's egress
   policy; `configs/v0_2.yaml`'s `data.provider: dukascopy` window has not
-  been fetched. The $50/margin feasibility question (Section 23) has not
-  been re-examined with a dataset large enough to run a strategy against
-  (one hour of M1 bars is enough to validate the pipeline, not to backtest).
+  been fetched, and cannot be, from this environment. The $50/margin
+  feasibility question (Section 23) has not been re-examined with a dataset
+  large enough to run a strategy against (one hour of M1 bars is enough to
+  validate the pipeline, not to backtest).
 
 ### Real-data validation results (2026-09-17 12:00-13:00 UTC EUR/USD sample)
 
@@ -182,13 +192,16 @@ identical in scope to before.
 
 ## Current blocker
 
-Fetching data over the network at all. This sandbox's egress policy denies
-`datafeed.dukascopy.com:443` (403 on CONNECT), so the `.bi5` provider
-remains untested against real bytes and `configs/v0_2.yaml`'s declared
-one-week window has not been fetched. The website-CSV-export path is no
-longer blocked - it works end to end against real data, manually supplied -
-but it only covers what a human downloads by hand, one export at a time, so
-it doesn't substitute for the `.bi5` provider at any real scale. The next
-step (either get network access for `.bi5`, or manually assemble enough CSV
-exports to run the frozen strategies against a real multi-day dataset and
-report results, per the approved V0.2 plan) has not been done.
+**Automatic (`.bi5` network) data acquisition.** This sandbox's egress
+policy denies `datafeed.dukascopy.com:443` (403 on CONNECT, confirmed via
+the proxy's status endpoint) - `.bi5` network acquisition **cannot be
+tested in this sandbox** because of that egress restriction, so the `.bi5`
+provider remains untested against real bytes and `configs/v0_2.yaml`'s
+declared one-week window has not been fetched. The website-CSV-export path
+(ADR 0004) is not blocked and has been validated end to end against real
+data, but it is a manual validation fixture/input path only - it requires a
+human to download every window by hand, one export at a time, and does not
+substitute for `.bi5` at any real acquisition scale. The next step (either
+get network access for `.bi5`, or manually assemble enough CSV exports to
+run the frozen strategies against a real multi-day dataset and report
+results, per the approved V0.2 plan) has not been done.

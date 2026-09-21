@@ -60,7 +60,12 @@ features/strategies  ->  risk/hard_limits  ->  execution/simulator  ->  portfoli
     pending a real fetch - see `docs/STATUS.md`; still blocked).
     `dukascopy_csv_export.py` ingests Dukascopy's website CSV export
     instead (separate BID/ASK files, local, not networked) - validated
-    against a real sample, see `docs/STATUS.md`.
+    end-to-end against a real sample (see `docs/STATUS.md`), but it is a
+    **manual validation fixture/input path, not the long-term acquisition
+    mechanism** (ADR 0004): it requires a human to download files by hand
+    and doesn't scale to a real backtest dataset. The `.bi5` network fetch
+    remains the intended automated acquisition path and is still blocked
+    and unverified against real bytes in this sandbox.
   - `pipeline/` — V0.2, provider-agnostic. `raw_store.py` (content-addressed,
     immutable artifact cache), `raw_validate.py` (checksum/structural checks
     only), `normalize.py` (tick -> `MarketBar` aggregation, documented
